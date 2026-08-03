@@ -25,6 +25,22 @@ pub fn init_status(state: State<'_, GrokState>) -> Result<Value, String> {
     state.init_result.clone()
 }
 
+/// The current model name/description, read from initialize's cached
+/// `_meta.modelState`. Informational only — switching models isn't wired yet,
+/// since ACP's `session/set_model` accepted our calls (200 OK) without visibly
+/// changing anything in a live test, and this account only has one model
+/// anyway, so there was nothing to actually verify switching between.
+#[tauri::command]
+pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> {
+    let result = state.init_result.clone()?;
+    let model_state = result
+        .get("_meta")
+        .and_then(|m| m.get("modelState"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    Ok(model_state)
+}
+
 #[tauri::command]
 pub async fn new_session(
     state: State<'_, GrokState>,

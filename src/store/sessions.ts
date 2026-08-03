@@ -75,6 +75,7 @@ interface SessionStoreState {
   toggleActivityDock: (open?: boolean) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
+  finalizeTurn: (sessionId: string) => void;
 }
 
 function uid(): string {
@@ -154,11 +155,23 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
     set((s) => {
       const session = s.sessions[sessionId];
       if (!session) return {};
+      // If the previous turn's trailing text hasn't been flushed into the
+      // timeline yet (finalizeTurn runs when session/prompt resolves, which can
+      // lag slightly behind the last visible chunk), flush it first — otherwise
+      // it keeps rendering in the always-last streamingText slot, appearing
+      // *below* this new message instead of where it actually belongs.
+      let timeline = session.timeline;
+      if (session.streamingText) {
+        timeline = [
+          ...timeline,
+          { id: uid(), ts: Date.now(), sessionUpdate: "agent_message_final", raw: { text: session.streamingText } },
+        ];
+      }
       const item: TimelineItem = { id: uid(), ts: Date.now(), sessionUpdate: "user_message", raw: { text } };
       return {
         sessions: {
           ...s.sessions,
-          [sessionId]: { ...session, timeline: [...session.timeline, item], status: "thinking" },
+          [sessionId]: { ...session, timeline: [...timeline, item], streamingText: "", status: "thinking" },
         },
       };
     }),
@@ -216,6 +229,28 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
       const sessionOrder = s.sessionOrder.filter((sid) => sid !== id);
       const activeSessionId = s.activeSessionId === id ? sessionOrder[0] : s.activeSessionId;
       return { sessions: rest, sessionOrder, activeSessionId };
+    }),
+
+  // `session/prompt` resolving is the actual ACP signal that a turn ended — nothing
+  // in the session/update stream itself flips status back to idle, so without this
+  // the composer's stop button would stay showing forever after grok finishes.
+  finalizeTurn: (sessionId) =>
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      let timeline = session.timeline;
+      if (session.streamingText) {
+        timeline = [
+          ...timeline,
+          { id: uid(), ts: Date.now(), sessionUpdate: "agent_message_final", raw: { text: session.streamingText } },
+        ];
+      }
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: { ...session, timeline, streamingText: "", status: "idle" },
+        },
+      };
     }),
 }));
 
