@@ -1,51 +1,186 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from "react";
+import { TitleBar } from "./components/TitleBar";
+import { Sidebar } from "./components/Sidebar";
+import { ChatPane } from "./components/ChatPane";
+import { Composer } from "./components/Composer";
+import { ActivityDock } from "./components/ActivityDock";
+import { Onboarding } from "./components/Onboarding";
+import { useSessionStore } from "./store/sessions";
+import {
+  newSession,
+  sendPrompt,
+  cancelPrompt,
+  defaultCwd,
+  checkAuth,
+  onAcpEvent,
+  onAcpReady,
+  onAcpInitError,
+} from "./lib/api";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  useEffect(() => {
+    checkAuth()
+      .then((ok) => setAuthState(ok ? "authenticated" : "unauthenticated"))
+      .catch(() => setAuthState("unauthenticated"));
+  }, []);
+
+  const {
+    ready,
+    setReady,
+    setInitError,
+    handleAcpEvent,
+    sessions,
+    activeSessionId,
+    registerSession,
+    appendUserMessage,
+    pendingPermissions,
+    activityDockOpen,
+    toggleActivityDock,
+    lastError,
+    setLastError,
+  } = useSessionStore();
+
+  const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
+  const activityCount = activeSession?.activityOrder.length ?? 0;
+
+  // Auto-open the Activity dock the first time this session gets any
+  // subagent/background-command activity — mirrors the TUI's own status
+  // line auto-surfacing background work. The user can still close it again.
+  useEffect(() => {
+    if (activityCount > 0 && !activityDockOpen) toggleActivityDock(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityCount]);
+
+  useEffect(() => {
+    const unlistenPromises = [
+      onAcpEvent((e) => handleAcpEvent(e)),
+      onAcpReady(() => setReady(true)),
+      onAcpInitError((msg) => setInitError(msg)),
+    ];
+    return () => {
+      unlistenPromises.forEach((p) => p.then((fn) => fn()));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleNewSession() {
+    try {
+      const cwd = await defaultCwd();
+      const { sessionId } = await newSession(cwd, false);
+      registerSession(sessionId, cwd);
+    } catch (err) {
+      setLastError(`Couldn't start a session: ${String(err)}`);
+    }
   }
 
+  async function handleSend(text: string) {
+    if (!activeSessionId) return;
+    appendUserMessage(activeSessionId, text);
+    try {
+      await sendPrompt(activeSessionId, text);
+    } catch (err) {
+      setLastError(`Prompt failed: ${String(err)}`);
+    }
+  }
+
+  async function handleCancel() {
+    if (!activeSessionId) return;
+    await cancelPrompt(activeSessionId);
+  }
+
+  const activePermissions = pendingPermissions.filter(
+    (p) => !p.sessionId || p.sessionId === activeSessionId
+  );
+
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <div className="h-full flex flex-col" style={{ background: "var(--gd-bg)" }}>
+      <TitleBar title={activeSession ? activeSession.title : "Grok Desktop"} />
+      {lastError && (
+        <div
+          className="px-4 py-2 text-[12px] flex items-center justify-between"
+          style={{ background: "var(--gd-danger-soft)", color: "var(--gd-danger)" }}
+        >
+          <span>{lastError}</span>
+          <button onClick={() => setLastError(undefined)} className="font-bold px-2">
+            ×
+          </button>
+        </div>
+      )}
+      <div className="flex-1 flex min-h-0">
+        {authState === "unauthenticated" ? (
+          <Onboarding onAuthenticated={() => setAuthState("authenticated")} />
+        ) : authState === "checking" ? (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-[13px]" style={{ color: "var(--gd-text-muted)" }}>
+              Checking grok CLI status…
+            </div>
+          </div>
+        ) : (
+          <>
+        <Sidebar onNewSession={handleNewSession} />
+        <div className="flex-1 flex min-h-0">
+          {activeSession ? (
+            <>
+              <div className="flex-1 flex flex-col min-h-0">
+                <div
+                  className="h-9 shrink-0 flex items-center justify-end px-3 border-b gap-2"
+                  style={{ borderColor: "var(--gd-border)" }}
+                >
+                  <button
+                    onClick={() => toggleActivityDock()}
+                    className="text-[11px] font-medium px-2 py-1 rounded-[var(--gd-radius-sm)] flex items-center gap-1.5"
+                    style={{
+                      color: activityDockOpen ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                      background: activityDockOpen ? "var(--gd-accent-soft)" : "transparent",
+                    }}
+                  >
+                    Activity
+                    {activityCount > 0 && (
+                      <span
+                        className="rounded-full px-1.5 text-[10px]"
+                        style={{ background: "var(--gd-surface-raised)" }}
+                      >
+                        {activityCount}
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <ChatPane session={activeSession} permissions={activePermissions} />
+                <Composer
+                  disabled={!ready}
+                  isStreaming={activeSession.status === "streaming" || activeSession.status === "thinking"}
+                  onSend={handleSend}
+                  onCancel={handleCancel}
+                />
+              </div>
+              {activityDockOpen && <ActivityDock sessionId={activeSessionId} />}
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-sm">
+                <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
+                  Grok Desktop
+                </div>
+                <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
+                  {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
+                </div>
+                <button
+                  onClick={handleNewSession}
+                  disabled={!ready}
+                  className="rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40"
+                  style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+                >
+                  New Session
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+          </>
+        )}
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    </div>
   );
 }
-
-export default App;

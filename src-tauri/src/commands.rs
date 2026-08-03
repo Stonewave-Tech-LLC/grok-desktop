@@ -7,6 +7,15 @@ use tauri::State;
 
 use crate::state::GrokState;
 
+/// The frontend doesn't have a home directory concept of its own — resolve it here
+/// rather than sending a literal `~`, which grok's subprocess would never expand.
+#[tauri::command]
+pub fn default_cwd() -> Result<String, String> {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "could not resolve home directory".to_string())
+}
+
 #[tauri::command]
 pub async fn new_session(
     state: State<'_, GrokState>,
