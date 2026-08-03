@@ -37,7 +37,7 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
         {session.timeline.map((item) => {
           if (item.sessionUpdate === "user_message") {
             return (
-              <div key={item.id} className="flex justify-end">
+              <div key={item.id} className="flex justify-end gd-enter">
                 <div
                   className="max-w-lg rounded-[var(--gd-radius-lg)] px-3.5 py-2 text-[14px]"
                   style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
@@ -49,7 +49,7 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
           }
           if (item.sessionUpdate === "agent_message_final") {
             return (
-              <div key={item.id} className="text-[14px] leading-relaxed" style={{ color: "var(--gd-text)" }}>
+              <div key={item.id} className="text-[14px] leading-relaxed gd-enter" style={{ color: "var(--gd-text)" }}>
                 <MarkdownMessage text={String(item.raw.text ?? "")} />
               </div>
             );
@@ -60,7 +60,7 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
             return (
               <div
                 key={item.id}
-                className="text-[12px] italic px-3 py-1.5 rounded-[var(--gd-radius-md)] my-1 max-w-xl"
+                className="text-[12px] italic px-3 py-1.5 rounded-[var(--gd-radius-md)] my-1 max-w-xl gd-enter"
                 style={{ color: "var(--gd-text-faint)", background: "var(--gd-surface)" }}
               >
                 {text}
@@ -68,12 +68,16 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
             );
           }
           if (item.sessionUpdate === "tool_call" || item.sessionUpdate === "tool_call_update") {
-            return <ToolCallCard key={item.id} raw={item.raw} />;
+            return (
+              <div key={item.id} className="gd-enter">
+                <ToolCallCard raw={item.raw} />
+              </div>
+            );
           }
           // Unknown/other update kinds — render minimally rather than
           // dropping data on the floor.
           return (
-            <details key={item.id} className="text-[11px] my-1" style={{ color: "var(--gd-text-faint)" }}>
+            <details key={item.id} className="text-[11px] my-1 gd-enter" style={{ color: "var(--gd-text-faint)" }}>
               <summary>{item.sessionUpdate}</summary>
               <pre className="whitespace-pre-wrap">{JSON.stringify(item.raw, null, 2)}</pre>
             </details>

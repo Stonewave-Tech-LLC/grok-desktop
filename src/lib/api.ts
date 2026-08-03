@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { AcpEvent, JsonValue } from "../types/acp";
 
 export async function defaultCwd(): Promise<string> {
@@ -44,6 +45,20 @@ export async function initStatus(): Promise<JsonValue> {
 
 export async function checkAuth(): Promise<boolean> {
   return invoke("check_auth");
+}
+
+export interface ModelInfo {
+  currentModelId?: string;
+  availableModels?: Array<{ modelId: string; name: string; description?: string }>;
+}
+
+export async function currentModelInfo(): Promise<ModelInfo> {
+  return invoke("current_model_info");
+}
+
+export async function pickFolder(defaultPath?: string): Promise<string | undefined> {
+  const result = await open({ directory: true, multiple: false, defaultPath });
+  return typeof result === "string" ? result : undefined;
 }
 
 export async function startDeviceLogin(): Promise<void> {

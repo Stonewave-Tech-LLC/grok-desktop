@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useSessionStore } from "../store/sessions";
-import { AboutModal } from "./AboutModal";
+import { SettingsModal } from "./SettingsModal";
 
 function relativeTime(ts: number): string {
   const diffSec = Math.round((Date.now() - ts) / 1000);
@@ -17,7 +17,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
     useSessionStore();
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [editValue, setEditValue] = useState("");
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   function startRename(id: string, current: string) {
     setEditingId(id);
@@ -37,7 +37,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
       <div className="p-3">
         <button
           onClick={onNewSession}
-          className="w-full rounded-[var(--gd-radius-md)] px-3 py-2 text-sm font-medium transition"
+          className="gd-glow-hover w-full rounded-[var(--gd-radius-md)] px-3 py-2 text-sm font-medium"
           style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
         >
           + New Session
@@ -60,8 +60,14 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
             <div
               key={id}
               onClick={() => !isEditing && setActiveSession(id)}
-              className="w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition group cursor-pointer"
+              className="w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition-colors duration-150 group cursor-pointer"
               style={{ background: active ? "var(--gd-accent-soft)" : "transparent" }}
+              onMouseEnter={(e) => {
+                if (!active) e.currentTarget.style.background = "var(--gd-surface-raised)";
+              }}
+              onMouseLeave={(e) => {
+                if (!active) e.currentTarget.style.background = "transparent";
+              }}
             >
               <div className="flex items-center justify-between gap-2">
                 {isEditing ? (
@@ -105,11 +111,28 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
                       e.stopPropagation();
                       if (window.confirm(`Delete session "${s.title}"?`)) deleteSession(id);
                     }}
-                    className="text-[13px] leading-none opacity-0 group-hover:opacity-100 transition px-0.5"
+                    className="h-5 w-5 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:!opacity-100"
                     style={{ color: "var(--gd-text-faint)" }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = "var(--gd-danger)";
+                      e.currentTarget.style.background = "var(--gd-danger-soft)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = "var(--gd-text-faint)";
+                      e.currentTarget.style.background = "transparent";
+                    }}
                     aria-label="Delete session"
+                    title="Delete session"
                   >
-                    ×
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <path
+                        d="M2.75 4h10.5M6.5 4V2.75a1 1 0 0 1 1-1h1a1 1 0 0 1 1 1V4m-6 0 .6 8.4a1 1 0 0 0 1 .93h5.8a1 1 0 0 0 1-.93L12.5 4"
+                        stroke="currentColor"
+                        strokeWidth="1.3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -121,24 +144,34 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
         })}
       </div>
 
-      <div
-        className="p-3 border-t flex items-center justify-between gap-2 text-[12px]"
-        style={{ borderColor: "var(--gd-border)", color: "var(--gd-text-muted)" }}
-      >
-        <span className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }} />
-          {ready ? "Connected" : "Connecting…"}
-        </span>
+      <div className="p-3 border-t" style={{ borderColor: "var(--gd-border)" }}>
         <button
-          onClick={() => setAboutOpen(true)}
-          className="h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-semibold"
-          style={{ color: "var(--gd-text-faint)", border: "1px solid var(--gd-border-strong)" }}
-          aria-label="About Grok Desktop"
+          onClick={() => setSettingsOpen(true)}
+          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium transition hover:brightness-95"
+          style={{ color: "var(--gd-text-muted)", background: "var(--gd-surface-raised)" }}
         >
-          i
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path
+              d="M8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M13.2 9.6a1.1 1.1 0 0 0 .22 1.2l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.2-.22 1.1 1.1 0 0 0-.67 1v.12a1.33 1.33 0 1 1-2.67 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.2.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.2 1.1 1.1 0 0 0-1-.67h-.12a1.33 1.33 0 1 1 0-2.67h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.2l-.04-.04A1.33 1.33 0 1 1 4.9 2.28l.04.04a1.1 1.1 0 0 0 1.2.22h.06a1.1 1.1 0 0 0 .67-1V1.4a1.33 1.33 0 1 1 2.67 0v.06a1.1 1.1 0 0 0 .67 1h.06a1.1 1.1 0 0 0 1.2-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.2v.06a1.1 1.1 0 0 0 1 .67h.12a1.33 1.33 0 1 1 0 2.67h-.06a1.1 1.1 0 0 0-1 .67Z"
+              stroke="currentColor"
+              strokeWidth="1.1"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Settings
+          <span
+            className="h-1.5 w-1.5 rounded-full ml-auto"
+            style={{ background: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }}
+          />
         </button>
       </div>
-      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+      {settingsOpen && <SettingsModal ready={ready} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

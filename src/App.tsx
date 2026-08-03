@@ -5,11 +5,13 @@ import { ChatPane } from "./components/ChatPane";
 import { Composer } from "./components/Composer";
 import { ActivityDock } from "./components/ActivityDock";
 import { Onboarding } from "./components/Onboarding";
+import { NewSessionDialog } from "./components/NewSessionDialog";
 import { useSessionStore } from "./store/sessions";
-import { newSession, sendPrompt, cancelPrompt, defaultCwd, checkAuth, initStatus, onAcpEvent } from "./lib/api";
+import { newSession, sendPrompt, cancelPrompt, checkAuth, initStatus, onAcpEvent } from "./lib/api";
 
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
+  const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
 
   useEffect(() => {
     checkAuth()
@@ -31,6 +33,7 @@ export default function App() {
     toggleActivityDock,
     lastError,
     setLastError,
+    finalizeTurn,
   } = useSessionStore();
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
@@ -58,10 +61,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function handleNewSession() {
+  async function handleCreateSession(cwd: string, yolo: boolean) {
+    setNewSessionDialogOpen(false);
     try {
-      const cwd = await defaultCwd();
-      const { sessionId } = await newSession(cwd, false);
+      const { sessionId } = await newSession(cwd, yolo);
       registerSession(sessionId, cwd);
     } catch (err) {
       setLastError(`Couldn't start a session: ${String(err)}`);
@@ -70,17 +73,27 @@ export default function App() {
 
   async function handleSend(text: string) {
     if (!activeSessionId) return;
-    appendUserMessage(activeSessionId, text);
+    const sessionId = activeSessionId;
+    appendUserMessage(sessionId, text);
     try {
-      await sendPrompt(activeSessionId, text);
+      await sendPrompt(sessionId, text);
     } catch (err) {
       setLastError(`Prompt failed: ${String(err)}`);
+    } finally {
+      // session/prompt resolving is the real "turn ended" signal — nothing in the
+      // streamed session/update notifications flips status back to idle on its own.
+      finalizeTurn(sessionId);
     }
   }
 
   async function handleCancel() {
     if (!activeSessionId) return;
-    await cancelPrompt(activeSessionId);
+    const sessionId = activeSessionId;
+    try {
+      await cancelPrompt(sessionId);
+    } finally {
+      finalizeTurn(sessionId);
+    }
   }
 
   const activePermissions = pendingPermissions.filter(
@@ -112,7 +125,7 @@ export default function App() {
           </div>
         ) : (
           <>
-            <Sidebar onNewSession={handleNewSession} />
+            <Sidebar onNewSession={() => setNewSessionDialogOpen(true)} />
             <div className="flex-1 flex min-h-0">
               {activeSession ? (
                 <>
@@ -160,9 +173,9 @@ export default function App() {
                       {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
                     </div>
                     <button
-                      onClick={handleNewSession}
+                      onClick={() => setNewSessionDialogOpen(true)}
                       disabled={!ready}
-                      className="rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40"
+                      className="gd-glow-hover rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40 disabled:pointer-events-none"
                       style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
                     >
                       New Session
@@ -174,6 +187,9 @@ export default function App() {
           </>
         )}
       </div>
+      {newSessionDialogOpen && (
+        <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
+      )}
     </div>
   );
 }

@@ -16,6 +16,7 @@ use state::GrokState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let binary = grok_binary::resolve()
                 .ok_or("grok CLI not found on PATH or in ~/.grok/bin/grok")?;
@@ -55,6 +56,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::default_cwd,
             commands::init_status,
+            commands::current_model_info,
             commands::new_session,
             commands::send_prompt,
             commands::cancel_prompt,

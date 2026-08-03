@@ -2,24 +2,40 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const win = getCurrentWindow();
 
+function TrafficLight({
+  color,
+  glyph,
+  label,
+  onClick,
+}: {
+  color: string;
+  glyph: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={label}
+      onClick={onClick}
+      className="group h-3.5 w-3.5 rounded-full flex items-center justify-center transition-transform active:scale-90"
+      style={{ background: color }}
+    >
+      <span
+        className="text-[9px] leading-none font-bold opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ color: "rgba(0,0,0,0.55)" }}
+      >
+        {glyph}
+      </span>
+    </button>
+  );
+}
+
 function WindowControls() {
   return (
-    <div className="flex items-center gap-2">
-      <button
-        aria-label="Minimize"
-        onClick={() => win.minimize()}
-        className="h-3 w-3 rounded-full bg-[var(--gd-border-strong)] hover:brightness-90 transition"
-      />
-      <button
-        aria-label="Maximize"
-        onClick={() => win.toggleMaximize()}
-        className="h-3 w-3 rounded-full bg-[var(--gd-border-strong)] hover:brightness-90 transition"
-      />
-      <button
-        aria-label="Close"
-        onClick={() => win.close()}
-        className="h-3 w-3 rounded-full bg-[var(--gd-danger)] hover:brightness-90 transition"
-      />
+    <div className="flex items-center gap-2 shrink-0">
+      <TrafficLight color="#ff5f57" glyph="✕" label="Close" onClick={() => win.close()} />
+      <TrafficLight color="#febc2e" glyph="−" label="Minimize" onClick={() => win.minimize()} />
+      <TrafficLight color="#28c840" glyph="+" label="Zoom" onClick={() => win.toggleMaximize()} />
     </div>
   );
 }

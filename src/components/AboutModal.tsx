@@ -21,7 +21,7 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-80 rounded-[var(--gd-radius-lg)] border p-5 text-center"
+        className="gd-pop w-80 rounded-[var(--gd-radius-lg)] border p-5 text-center"
         style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
       >
         <div

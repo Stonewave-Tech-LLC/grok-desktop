@@ -119,12 +119,25 @@ body,
   margin: 0;
 }
 
+html {
+  background: transparent;
+}
+
 body {
-  background: var(--gd-bg);
+  background: transparent;
   color: var(--gd-text);
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-family: "Space Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
+}
+
+/* The window itself is transparent (tauri.conf.json) so this radius actually
+   shows the desktop behind it, instead of square corners poking out past a
+   rounded div — decorations:false loses the OS's own window rounding. */
+#root {
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--gd-bg);
 }
 
 ::-webkit-scrollbar {
@@ -139,4 +152,48 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@keyframes gd-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.gd-enter {
+  animation: gd-enter var(--gd-dur-med) var(--gd-ease-out-expo) both;
+}
+
+@keyframes gd-pop {
+  0% {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.gd-pop {
+  animation: gd-pop var(--gd-dur-med) var(--gd-ease-spring) both;
+}
+
+/* A subtle accent glow for primary buttons, in the spirit of a "dark + glossy"
+   direction — not a full rebrand, just enough sparkle on the interactive
+   surfaces that matter most. */
+.gd-glow-hover {
+  transition: box-shadow var(--gd-dur-fast) ease, transform var(--gd-dur-fast) ease, filter var(--gd-dur-fast) ease;
+}
+.gd-glow-hover:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px -4px var(--gd-accent);
+}
+.gd-glow-hover:active {
+  transform: scale(0.97);
 }
