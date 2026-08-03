@@ -16,6 +16,15 @@ pub fn default_cwd() -> Result<String, String> {
         .ok_or_else(|| "could not resolve home directory".to_string())
 }
 
+/// The result of the one-time ACP `initialize` handshake, already completed by the
+/// time this is callable (see lib.rs's setup()). A plain request/response command
+/// rather than a "ready" event — the frontend calls this once on mount and gets a
+/// correct answer regardless of how fast its own JS finished loading.
+#[tauri::command]
+pub fn init_status(state: State<'_, GrokState>) -> Result<Value, String> {
+    state.init_result.clone()
+}
+
 #[tauri::command]
 pub async fn new_session(
     state: State<'_, GrokState>,

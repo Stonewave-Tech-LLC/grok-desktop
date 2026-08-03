@@ -28,16 +28,15 @@ pub fn run() {
             // `tokio::process::Command::spawn` (used inside `AcpProcess::spawn`) needs
             // an entered Tokio runtime context to register the child with the async
             // process reactor. Tauri's `setup()` runs before that context exists on
-            // the main thread, so we enter it explicitly via `block_on`.
-            let process = tauri::async_runtime::block_on(async {
-                AcpProcess::spawn(&binary, &["agent", "stdio"], on_event)
-            })?;
-            app.manage(GrokState {
-                process: process.clone(),
-            });
-
-            let handle2 = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
+            // the main thread, so we enter it explicitly via `block_on` — and do the
+            // `initialize` handshake in the same block, synchronously, so the result
+            // is already sitting in managed state by the time the window can show.
+            // (Doing it via a fire-and-forget spawned task + a "ready" event race with
+            // the frontend's listener registration used to lose that race once the JS
+            // bundle grew — the event has no replay, so a listener that attaches even
+            // slightly late just misses it forever.)
+            let (process, init_result) = tauri::async_runtime::block_on(async {
+                let process = AcpProcess::spawn(&binary, &["agent", "stdio"], on_event)?;
                 let params = json!({
                     "protocolVersion": 1,
                     "clientCapabilities": {
@@ -45,20 +44,17 @@ pub fn run() {
                         "terminal": false
                     }
                 });
-                match process.request("initialize", params).await {
-                    Ok(result) => {
-                        let _ = handle2.emit("acp-ready", &result);
-                    }
-                    Err(e) => {
-                        let _ = handle2.emit("acp-init-error", e.to_string());
-                    }
-                }
-            });
+                let init_result = process.request("initialize", params).await.map_err(|e| e.to_string());
+                Ok::<_, acp::AcpProcessError>((process, init_result))
+            })?;
+
+            app.manage(GrokState { process, init_result });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::default_cwd,
+            commands::init_status,
             commands::new_session,
             commands::send_prompt,
             commands::cancel_prompt,

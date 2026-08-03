@@ -35,12 +35,11 @@ export function onAcpEvent(handler: (event: AcpEvent) => void): Promise<Unlisten
   return listen<AcpEvent>("acp-event", (e) => handler(e.payload));
 }
 
-export function onAcpReady(handler: (payload: JsonValue) => void): Promise<UnlistenFn> {
-  return listen<JsonValue>("acp-ready", (e) => handler(e.payload));
-}
-
-export function onAcpInitError(handler: (message: string) => void): Promise<UnlistenFn> {
-  return listen<string>("acp-init-error", (e) => handler(e.payload));
+/// The `initialize` handshake already completed by the time the Rust side finishes
+/// setup() — this is a plain command (request/response), not a one-shot event, so
+/// there's no race with how fast the frontend's own JS happens to load.
+export async function initStatus(): Promise<JsonValue> {
+  return invoke("init_status");
 }
 
 export async function checkAuth(): Promise<boolean> {

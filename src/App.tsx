@@ -6,16 +6,7 @@ import { Composer } from "./components/Composer";
 import { ActivityDock } from "./components/ActivityDock";
 import { Onboarding } from "./components/Onboarding";
 import { useSessionStore } from "./store/sessions";
-import {
-  newSession,
-  sendPrompt,
-  cancelPrompt,
-  defaultCwd,
-  checkAuth,
-  onAcpEvent,
-  onAcpReady,
-  onAcpInitError,
-} from "./lib/api";
+import { newSession, sendPrompt, cancelPrompt, defaultCwd, checkAuth, initStatus, onAcpEvent } from "./lib/api";
 
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
@@ -54,13 +45,15 @@ export default function App() {
   }, [activityCount]);
 
   useEffect(() => {
-    const unlistenPromises = [
-      onAcpEvent((e) => handleAcpEvent(e)),
-      onAcpReady(() => setReady(true)),
-      onAcpInitError((msg) => setInitError(msg)),
-    ];
+    const unlisten = onAcpEvent((e) => handleAcpEvent(e));
+    // A command (request/response), not a "ready" event — correct regardless of
+    // how fast this effect happens to run relative to the Rust side finishing
+    // its (near-instant) initialize handshake. See src-tauri's state.rs/lib.rs.
+    initStatus()
+      .then(() => setReady(true))
+      .catch((err) => setInitError(String(err)));
     return () => {
-      unlistenPromises.forEach((p) => p.then((fn) => fn()));
+      unlisten.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -119,65 +112,65 @@ export default function App() {
           </div>
         ) : (
           <>
-        <Sidebar onNewSession={handleNewSession} />
-        <div className="flex-1 flex min-h-0">
-          {activeSession ? (
-            <>
-              <div className="flex-1 flex flex-col min-h-0">
-                <div
-                  className="h-9 shrink-0 flex items-center justify-end px-3 border-b gap-2"
-                  style={{ borderColor: "var(--gd-border)" }}
-                >
-                  <button
-                    onClick={() => toggleActivityDock()}
-                    className="text-[11px] font-medium px-2 py-1 rounded-[var(--gd-radius-sm)] flex items-center gap-1.5"
-                    style={{
-                      color: activityDockOpen ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                      background: activityDockOpen ? "var(--gd-accent-soft)" : "transparent",
-                    }}
-                  >
-                    Activity
-                    {activityCount > 0 && (
-                      <span
-                        className="rounded-full px-1.5 text-[10px]"
-                        style={{ background: "var(--gd-surface-raised)" }}
+            <Sidebar onNewSession={handleNewSession} />
+            <div className="flex-1 flex min-h-0">
+              {activeSession ? (
+                <>
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div
+                      className="h-9 shrink-0 flex items-center justify-end px-3 border-b gap-2"
+                      style={{ borderColor: "var(--gd-border)" }}
+                    >
+                      <button
+                        onClick={() => toggleActivityDock()}
+                        className="text-[11px] font-medium px-2 py-1 rounded-[var(--gd-radius-sm)] flex items-center gap-1.5"
+                        style={{
+                          color: activityDockOpen ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                          background: activityDockOpen ? "var(--gd-accent-soft)" : "transparent",
+                        }}
                       >
-                        {activityCount}
-                      </span>
-                    )}
-                  </button>
+                        Activity
+                        {activityCount > 0 && (
+                          <span
+                            className="rounded-full px-1.5 text-[10px]"
+                            style={{ background: "var(--gd-surface-raised)" }}
+                          >
+                            {activityCount}
+                          </span>
+                        )}
+                      </button>
+                    </div>
+                    <ChatPane session={activeSession} permissions={activePermissions} />
+                    <Composer
+                      disabled={!ready}
+                      isStreaming={activeSession.status === "streaming" || activeSession.status === "thinking"}
+                      onSend={handleSend}
+                      onCancel={handleCancel}
+                    />
+                  </div>
+                  {activityDockOpen && <ActivityDock sessionId={activeSessionId} />}
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center max-w-sm">
+                    <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
+                      Grok Desktop
+                    </div>
+                    <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
+                      {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
+                    </div>
+                    <button
+                      onClick={handleNewSession}
+                      disabled={!ready}
+                      className="rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40"
+                      style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+                    >
+                      New Session
+                    </button>
+                  </div>
                 </div>
-                <ChatPane session={activeSession} permissions={activePermissions} />
-                <Composer
-                  disabled={!ready}
-                  isStreaming={activeSession.status === "streaming" || activeSession.status === "thinking"}
-                  onSend={handleSend}
-                  onCancel={handleCancel}
-                />
-              </div>
-              {activityDockOpen && <ActivityDock sessionId={activeSessionId} />}
-            </>
-          ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-sm">
-                <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
-                  Grok Desktop
-                </div>
-                <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
-                  {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
-                </div>
-                <button
-                  onClick={handleNewSession}
-                  disabled={!ready}
-                  className="rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40"
-                  style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
-                >
-                  New Session
-                </button>
-              </div>
+              )}
             </div>
-          )}
-        </div>
           </>
         )}
       </div>
