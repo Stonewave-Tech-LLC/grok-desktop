@@ -1,5 +1,15 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "./CodeBlock";
+
+function textOf(node: unknown): string {
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (node && typeof node === "object" && "props" in node) {
+    return textOf((node as { props?: { children?: unknown } }).props?.children);
+  }
+  return "";
+}
 
 export function MarkdownMessage({ text }: { text: string }) {
   return (
@@ -22,19 +32,19 @@ export function MarkdownMessage({ text }: { text: string }) {
                 </code>
               );
             }
+            const language = match?.[1];
+            const code = textOf(children).replace(/\n$/, "");
             return (
               <div className="rounded-[var(--gd-radius-md)] overflow-hidden my-2 border" style={{ borderColor: "var(--gd-border)" }}>
-                {match && (
+                {language && (
                   <div
                     className="px-3 py-1 text-[10px] uppercase tracking-wide"
                     style={{ background: "var(--gd-surface-raised)", color: "var(--gd-text-faint)" }}
                   >
-                    {match[1]}
+                    {language}
                   </div>
                 )}
-                <pre className="p-3 overflow-x-auto text-[13px] leading-relaxed" style={{ background: "var(--gd-bg)", margin: 0 }}>
-                  <code {...rest}>{children}</code>
-                </pre>
+                <CodeBlock language={language} code={code} />
               </div>
             );
           },

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSessionStore } from "../store/sessions";
+import { AboutModal } from "./AboutModal";
 
 function relativeTime(ts: number): string {
   const diffSec = Math.round((Date.now() - ts) / 1000);
@@ -16,6 +17,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
     useSessionStore();
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
   const [editValue, setEditValue] = useState("");
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   function startRename(id: string, current: string) {
     setEditingId(id);
@@ -120,12 +122,23 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
       </div>
 
       <div
-        className="p-3 border-t flex items-center gap-2 text-[12px]"
+        className="p-3 border-t flex items-center justify-between gap-2 text-[12px]"
         style={{ borderColor: "var(--gd-border)", color: "var(--gd-text-muted)" }}
       >
-        <span className="h-1.5 w-1.5 rounded-full" style={{ background: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }} />
-        {ready ? "Connected" : "Connecting…"}
+        <span className="flex items-center gap-2">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }} />
+          {ready ? "Connected" : "Connecting…"}
+        </span>
+        <button
+          onClick={() => setAboutOpen(true)}
+          className="h-4 w-4 rounded-full flex items-center justify-center text-[10px] font-semibold"
+          style={{ color: "var(--gd-text-faint)", border: "1px solid var(--gd-border-strong)" }}
+          aria-label="About Grok Desktop"
+        >
+          i
+        </button>
       </div>
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
     </div>
   );
 }

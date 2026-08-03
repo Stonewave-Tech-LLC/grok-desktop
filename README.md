@@ -15,14 +15,19 @@ instead of a terminal.
 Grok Desktop spawns `grok agent stdio` and speaks ACP (JSON-RPC 2.0 over stdio) to it
 directly — it's a real protocol client, not a terminal wrapper. That gets you:
 
-- **Chat** with streaming responses, markdown and syntax-highlighted code rendering.
+- **Chat** with streaming responses, markdown and syntax-highlighted code rendering
+  (CodeMirror, for JS/TS/Python/Rust/JSON/Markdown; other languages render plainly).
 - **Tool calls** rendered inline as the agent reads files, edits code, and runs
-  commands — including inline diffs for edits.
-- **Permission prompts** (allow/deny) rendered as part of the conversation.
-- **An Activity dock** — grok's own subagents, background shell commands, and
-  monitors/loops shown as live, flippable panels (a GUI take on the CLI's own Tasks
-  pane and Agent Dashboard), instead of being invisible or buried in scrollback.
-- **Sessions** — new/resume/rename/delete, backed by grok's own on-disk session store.
+  commands — including inline diffs for edits, fed straight from grok's own
+  before/after text (no unified-diff parsing needed).
+- **Permission prompts** rendered inline as part of the conversation, built from
+  whatever options the request actually offers rather than a hardcoded allow/deny.
+- **An Activity dock** — grok's own subagents and background shell commands shown as
+  live status cards (a GUI take on the CLI's own Tasks pane), instead of being
+  invisible or buried in scrollback. Auto-opens the first time a session gets any.
+- **Sessions** — new / switch / rename / delete for the current app run. Login is
+  handled in-app too: a first-run screen drives `grok login --device-auth` and opens
+  the browser for you.
 
 ## Status
 
@@ -59,8 +64,7 @@ npm run tauri build  # release build
 - **`src-tauri/`** — Rust/Tauri backend. Owns the `grok agent stdio` child process,
   frames newline-delimited JSON-RPC 2.0 over its stdin/stdout, and bridges it to the
   frontend as Tauri commands/events. See [`src-tauri/src/acp/`](src-tauri/src/acp/).
-- **`src/`** — React/TypeScript frontend (Vite, Tailwind, CodeMirror for code/diffs,
-  xterm.js for live command output).
+- **`src/`** — React/TypeScript frontend (Vite, Tailwind, CodeMirror for code/diffs).
 - **`docs/protocol-notes/`** — captured real-world ACP traffic from `grok agent stdio`,
   used to build the client instead of guessing at wire shapes. Might be useful if
   you're building your own ACP client against grok.
@@ -70,6 +74,13 @@ npm run tauri build  # release build
 Explicitly out of scope for the current build, so the gap between "done" and "planned"
 stays honest:
 
+- A standalone file tree / browser view (inline diffs in the chat cover the common
+  case today; a dedicated Files tab for browsing the whole workspace is next)
+- Session history that survives an app restart (sessions currently live for the app's
+  run, backed by the live ACP connection, not yet reloaded from grok's on-disk store)
+- Live streaming sub-transcripts for subagents (today: periodic progress + a final
+  summary — that's all the protocol exposes on the parent's own event stream; see
+  `docs/protocol-notes/`)
 - Multi-window / multi-project tabs
 - MCP server management UI
 - Plugin browser
