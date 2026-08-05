@@ -2,6 +2,7 @@
 //! `AcpProcess` — the actual ACP method names/params live here since this is the
 //! seam between "generic JSON-RPC" (acp::process) and "grok's specific protocol".
 
+use base64::Engine;
 use serde_json::{json, Value};
 use tauri::State;
 
@@ -61,6 +62,32 @@ pub async fn new_session(
         .map_err(|e| e.to_string())
 }
 
+/// Reattaches a session that was created by a *previous* app run — grok persists
+/// sessions to disk under ~/.grok/sessions/ regardless of which process created
+/// them, and `session/load` (agentCapabilities.loadSession) resumes one by ID on a
+/// fresh process. Confirmed live: the result's `_meta.sessionId` matches the
+/// original exactly, so the *backend* context (files touched, prior turns) carries
+/// over correctly. It does NOT replay the old messages as session/update
+/// notifications, though — the visual transcript is restored separately from our
+/// own persisted store state (see src/store/sessions.ts's persist middleware).
+#[tauri::command]
+pub async fn load_session(
+    state: State<'_, GrokState>,
+    session_id: String,
+    cwd: String,
+) -> Result<Value, String> {
+    let params = json!({
+        "sessionId": session_id,
+        "cwd": cwd,
+        "mcpServers": [],
+    });
+    state
+        .process
+        .request("session/load", params)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn send_prompt(
     state: State<'_, GrokState>,
@@ -108,5 +135,88 @@ pub fn deny_permission(state: State<'_, GrokState>, id: Value) -> Result<(), Str
     state
         .process
         .respond(id, json!({ "outcome": { "outcome": "cancelled" } }))
+        .map_err(|e| e.to_string())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedImage {
+    data_url: String,
+    /// The real absolute path that actually resolved — not necessarily the
+    /// `path` argument (which may have been a relative short path). The
+    /// frontend needs this for the download button, since re-encoding the
+    /// `data:` URL back to bytes would be redundant when we already have the
+    /// file on disk.
+    path: String,
+}
+
+/// Reads a local image and returns it as a `data:` URL so the frontend can
+/// render an inline `<img>` preview without widening Tauri's asset-protocol
+/// filesystem scope. `path` from a tool call's `rawOutput.path` is always
+/// absolute and used as-is. `path` from the model's own prose is often a
+/// "short path" (e.g. `images/8.jpg`) — grok's TUI turns that into an OSC-8
+/// terminal hyperlink pointing at the real file, but a generic markdown
+/// renderer has no such mechanism, so we resolve it ourselves: first against
+/// the session's cwd (a real project file the model referenced), then against
+/// grok's own on-disk session folder. Confirmed by inspecting `~/.grok/sessions/`
+/// directly: the real layout is `~/.grok/sessions/<percent-encoded-cwd>/<sessionId>/images/<n>.jpg`
+/// (an earlier guess of `~/.grok/sessions/<sessionId>/...` — no cwd segment — was wrong).
+#[tauri::command]
+pub fn read_image_data_url(path: String, cwd: Option<String>, session_id: Option<String>) -> Result<ResolvedImage, String> {
+    let mut candidates = Vec::new();
+    if std::path::Path::new(&path).is_absolute() {
+        candidates.push(path.clone());
+    } else {
+        if let Some(cwd) = &cwd {
+            candidates.push(format!("{}/{}", cwd.trim_end_matches('/'), path));
+        }
+        if let (Some(cwd), Some(session_id)) = (&cwd, &session_id) {
+            if let Some(home) = dirs::home_dir() {
+                let encoded_cwd = urlencoding::encode(cwd);
+                candidates.push(
+                    home.join(".grok/sessions")
+                        .join(encoded_cwd.as_ref())
+                        .join(session_id)
+                        .join(&path)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        candidates.push(path.clone());
+    }
+
+    for candidate in &candidates {
+        if let Ok(bytes) = std::fs::read(candidate) {
+            let mime = match std::path::Path::new(candidate)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase()
+                .as_str()
+            {
+                "png" => "image/png",
+                "webp" => "image/webp",
+                "gif" => "image/gif",
+                _ => "image/jpeg",
+            };
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            return Ok(ResolvedImage {
+                data_url: format!("data:{mime};base64,{encoded}"),
+                path: candidate.clone(),
+            });
+        }
+    }
+    Err(format!("could not read image from any of: {candidates:?}"))
+}
+
+/// Copies a resolved image (see `read_image_data_url`) to a user-chosen
+/// destination — backs the download button in the image lightbox. A plain
+/// file copy rather than re-encoding the `data:` URL the frontend already
+/// has, so the saved file is byte-identical to the original.
+#[tauri::command]
+pub fn save_image_as(source_path: String, dest_path: String) -> Result<(), String> {
+    std::fs::copy(&source_path, &dest_path)
+        .map(|_| ())
         .map_err(|e| e.to_string())
 }

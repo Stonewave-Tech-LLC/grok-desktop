@@ -44,15 +44,18 @@ impl AcpProcess {
     pub fn spawn(
         binary: &str,
         args: &[&str],
+        envs: &[(&str, &str)],
         on_event: EventCallback,
     ) -> Result<Arc<Self>, AcpProcessError> {
-        let mut child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .args(args)
+            .envs(envs.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+        let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().expect("stdin was piped");
         let stdout = child.stdout.take().expect("stdout was piped");

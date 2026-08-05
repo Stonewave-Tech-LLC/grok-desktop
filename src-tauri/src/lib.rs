@@ -2,6 +2,7 @@ mod acp;
 mod auth;
 mod commands;
 mod grok_binary;
+mod memory;
 mod state;
 
 use std::sync::Arc;
@@ -36,8 +37,23 @@ pub fn run() {
             // the frontend's listener registration used to lose that race once the JS
             // bundle grew — the event has no replay, so a listener that attaches even
             // slightly late just misses it forever.)
+            // grok agent stdio has no --experimental-memory flag of its own (confirmed
+            // via --help); enabling memory means setting GROK_MEMORY=1 on this
+            // process's env at spawn time. Read once here — the frontend can't ask
+            // yet — and freeze the resolved state into GrokState.memory_active,
+            // since flipping the Settings toggle later can't retroactively change
+            // an already-spawned child's environment (that needs a restart).
+            let memory_active = memory::read_enabled_flag();
+            let envs: &[(&str, &str)] = if memory_active { &[("GROK_MEMORY", "1")] } else { &[] };
+            // Self-heals the ~/.grok/rules/ policy file on every launch where
+            // memory is active — covers installs that enabled memory before
+            // this file existed, and repairs it if it's ever deleted by hand.
+            if memory_active {
+                let _ = memory::write_agent_rules();
+            }
+
             let (process, init_result) = tauri::async_runtime::block_on(async {
-                let process = AcpProcess::spawn(&binary, &["agent", "stdio"], on_event)?;
+                let process = AcpProcess::spawn(&binary, &["agent", "stdio"], envs, on_event)?;
                 let params = json!({
                     "protocolVersion": 1,
                     "clientCapabilities": {
@@ -49,7 +65,7 @@ pub fn run() {
                 Ok::<_, acp::AcpProcessError>((process, init_result))
             })?;
 
-            app.manage(GrokState { process, init_result });
+            app.manage(GrokState { process, init_result, memory_active });
 
             Ok(())
         })
@@ -58,12 +74,22 @@ pub fn run() {
             commands::init_status,
             commands::current_model_info,
             commands::new_session,
+            commands::load_session,
             commands::send_prompt,
             commands::cancel_prompt,
             commands::respond_permission,
             commands::deny_permission,
+            commands::read_image_data_url,
+            commands::save_image_as,
             auth::check_auth,
             auth::start_device_login,
+            memory::get_memory_enabled,
+            memory::set_memory_enabled,
+            memory::memory_runtime_status,
+            memory::list_anvil_entries,
+            memory::read_anvil_entry,
+            memory::write_anvil_entry,
+            memory::delete_anvil_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

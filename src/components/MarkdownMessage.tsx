@@ -1,6 +1,56 @@
+import { memo, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
+import { readImageDataUrl } from "../lib/api";
+import { GeneratedImage } from "./GeneratedImage";
+
+// A whole markdown line that is *only* a single-backtick inline-code span,
+// e.g. `    `├── Local forge (kleine Tasks)`` — the shape grok tends to use
+// for file/dir trees and outline diagrams instead of a fenced ``` block.
+// Rendered as-is, each such line becomes its own little bordered pill (our
+// inline-`code` styling), which reads as a stack of disconnected chips
+// rather than one diagram. Detect runs of 2+ consecutive such lines and
+// promote them to a real fenced code block before ReactMarkdown ever sees
+// them, so they render as one cohesive, properly-aligned block instead.
+const WHOLE_LINE_INLINE_CODE = /^([ \t]*)`([^`\n]+)`[ \t]*$/;
+
+function promoteTreeLikeCodeLines(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let inFence = false;
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      out.push(line);
+      i++;
+      continue;
+    }
+    if (!inFence) {
+      const match = WHOLE_LINE_INLINE_CODE.exec(line);
+      if (match) {
+        const run: string[] = [];
+        let j = i;
+        while (j < lines.length) {
+          const m = WHOLE_LINE_INLINE_CODE.exec(lines[j]);
+          if (!m) break;
+          run.push(m[1] + m[2]);
+          j++;
+        }
+        if (run.length >= 2) {
+          out.push("```", ...run, "```");
+          i = j;
+          continue;
+        }
+      }
+    }
+    out.push(line);
+    i++;
+  }
+  return out.join("\n");
+}
 
 function textOf(node: unknown): string {
   if (typeof node === "string") return node;
@@ -11,12 +61,89 @@ function textOf(node: unknown): string {
   return "";
 }
 
-export function MarkdownMessage({ text }: { text: string }) {
+// The model's own prose often references a generated/attached image by a
+// relative "short path" — grok's TUI turns that into a clickable OSC-8
+// terminal hyperlink, but a plain `<img src="images/8.jpg">` in a webview
+// just 404s (native broken-image icon). Resolve it ourselves instead of
+// rendering the raw src directly; see read_image_data_url's doc comment for
+// the exact candidate-path resolution order.
+function LocalImage({ src, alt, cwd, sessionId }: { src?: string; alt?: string; cwd?: string; sessionId?: string }) {
+  const [dataUrl, setDataUrl] = useState<string | undefined>(undefined);
+  const [resolvedPath, setResolvedPath] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!src) {
+      setFailed(true);
+      return;
+    }
+    if (/^(https?:|data:)/.test(src)) {
+      setDataUrl(src);
+      setResolvedPath(undefined);
+      return;
+    }
+    let cancelled = false;
+    setDataUrl(undefined);
+    setResolvedPath(undefined);
+    setFailed(false);
+    readImageDataUrl(src, cwd, sessionId)
+      .then((result) => {
+        if (!cancelled) {
+          setDataUrl(result.dataUrl);
+          setResolvedPath(result.path);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [src, cwd, sessionId]);
+
+  if (failed) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] align-middle"
+        style={{ background: "var(--gd-surface-raised)", color: "var(--gd-text-faint)", border: "1px solid var(--gd-border)" }}
+      >
+        <span aria-hidden>🖼</span>
+        {alt || src}
+      </span>
+    );
+  }
+
+  if (!dataUrl) {
+    return <span className="inline-block h-24 w-36 rounded-[var(--gd-radius-sm)] animate-pulse align-middle" style={{ background: "var(--gd-metal-1)" }} />;
+  }
+
+  return (
+    <GeneratedImage
+      src={dataUrl}
+      path={resolvedPath}
+      alt={alt}
+      className="rounded-[var(--gd-radius-sm)] max-h-72 max-w-full border block my-1.5"
+      style={{ borderColor: "var(--gd-border)" }}
+    />
+  );
+}
+
+// Memoized — without this, every historical message in a session re-runs its
+// full react-markdown parse (and re-mounts CodeMirror for any code blocks)
+// on *every* streamed token of the current response, since ChatPane's parent
+// re-renders each token and React re-renders all children by default. That's
+// an O(session length) cost per token instead of O(1), which is exactly what
+// made long sessions grind the whole app to a halt while grok was working.
+function MarkdownMessageImpl({ text, cwd, sessionId }: { text: string; cwd?: string; sessionId?: string }) {
+  const normalized = promoteTreeLikeCodeLines(text);
   return (
     <div className="prose-gd">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          img(props) {
+            return <LocalImage src={props.src} alt={props.alt} cwd={cwd} sessionId={sessionId} />;
+          },
           code(props) {
             const { children, className, ...rest } = props;
             const match = /language-(\w+)/.exec(className || "");
@@ -120,8 +247,10 @@ export function MarkdownMessage({ text }: { text: string }) {
           },
         }}
       >
-        {text}
+        {normalized}
       </ReactMarkdown>
     </div>
   );
 }
+
+export const MarkdownMessage = memo(MarkdownMessageImpl);

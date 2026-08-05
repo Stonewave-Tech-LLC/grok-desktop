@@ -1,110 +1,52 @@
 @import "tailwindcss";
 
-/* Grok Desktop design tokens.
-   A warm graphite/ember palette — distinct from typical blue-accented dev
-   tools, and deliberately its own identity (not borrowed from any other
-   Stonewave app). Light/dark via system preference, overridable with
-   data-theme on <html>. */
+/* Grok Desktop design tokens — "Dark Metal" (Anvil CI), ported from
+   welcome_grok/DESIGN.md. Dark-only by design: near-black stacked surfaces,
+   hairline white borders, monochrome-first accents, white glow on hover
+   instead of a colored brand hue. Don't invent a new palette here — extend
+   these tokens, keep the metal + white-glow language. */
 
 :root {
-  --gd-bg: #f7f6f3;
-  --gd-surface: #ffffff;
-  --gd-surface-raised: #ffffff;
-  --gd-border: #e7e5e0;
-  --gd-border-strong: #d8d5cd;
-  --gd-text: #17161a;
-  --gd-text-muted: #6b6a70;
-  --gd-text-faint: #9a989e;
+  --gd-bg: #0a0a0c;
+  --gd-surface: #111114;
+  --gd-surface-raised: #18181c;
+  --gd-metal-1: #1c1c22;
+  --gd-metal-2: #26262e;
+  --gd-metal-3: #32323c;
 
-  --gd-accent: #e0642a;
-  --gd-accent-soft: #faead4;
-  --gd-accent-contrast: #fff8f2;
+  --gd-border: rgba(255, 255, 255, 0.08);
+  --gd-border-strong: rgba(255, 255, 255, 0.16);
+  --gd-border-glow: rgba(255, 255, 255, 0.28);
 
-  --gd-success: #2f9e5b;
-  --gd-success-soft: #e6f5ec;
-  --gd-warning: #c07d1a;
-  --gd-warning-soft: #fbf0dc;
-  --gd-danger: #c53434;
-  --gd-danger-soft: #fbe9e9;
+  --gd-text: #f4f4f5;
+  --gd-text-muted: #a1a1aa;
+  --gd-text-faint: #71717a;
 
-  --gd-radius-sm: 6px;
-  --gd-radius-md: 10px;
-  --gd-radius-lg: 16px;
+  /* Monochrome-first "accent": soft white chrome, not a brand hue. Primary
+     actions use --gd-billet (a light gradient) + dark text on top of this. */
+  --gd-accent: #e8e8ec;
+  --gd-accent-soft: rgba(255, 255, 255, 0.08);
+  --gd-accent-contrast: #0a0a0c;
+  --gd-billet: linear-gradient(180deg, #f5f5f7 0%, #d4d4d8 100%);
+
+  --gd-success: #5cff9a;
+  --gd-success-soft: rgba(92, 255, 154, 0.12);
+  --gd-warning: #febc2e;
+  --gd-warning-soft: rgba(254, 188, 46, 0.12);
+  --gd-danger: #ff5c5c;
+  --gd-danger-soft: rgba(255, 92, 92, 0.12);
+
+  --gd-radius-sm: 10px;
+  --gd-radius-md: 12px;
+  --gd-radius-lg: 18px;
 
   --gd-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --gd-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --gd-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --gd-dur-fast: 120ms;
   --gd-dur-med: 220ms;
   --gd-dur-slow: 420ms;
 
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --gd-bg: #0c0c0e;
-    --gd-surface: #141419;
-    --gd-surface-raised: #1b1b21;
-    --gd-border: #26262d;
-    --gd-border-strong: #34343d;
-    --gd-text: #f1f0ec;
-    --gd-text-muted: #a3a1a8;
-    --gd-text-faint: #6d6c73;
-
-    --gd-accent: #f47b3a;
-    --gd-accent-soft: #2c1c12;
-    --gd-accent-contrast: #1a0f08;
-
-    --gd-success: #4cc47f;
-    --gd-success-soft: #123522;
-    --gd-warning: #e0a63e;
-    --gd-warning-soft: #3a2a0d;
-    --gd-danger: #e56363;
-    --gd-danger-soft: #3a1414;
-
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme="light"] {
-  --gd-bg: #f7f6f3;
-  --gd-surface: #ffffff;
-  --gd-surface-raised: #ffffff;
-  --gd-border: #e7e5e0;
-  --gd-border-strong: #d8d5cd;
-  --gd-text: #17161a;
-  --gd-text-muted: #6b6a70;
-  --gd-text-faint: #9a989e;
-  --gd-accent: #e0642a;
-  --gd-accent-soft: #faead4;
-  --gd-accent-contrast: #fff8f2;
-  --gd-success: #2f9e5b;
-  --gd-success-soft: #e6f5ec;
-  --gd-warning: #c07d1a;
-  --gd-warning-soft: #fbf0dc;
-  --gd-danger: #c53434;
-  --gd-danger-soft: #fbe9e9;
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  --gd-bg: #0c0c0e;
-  --gd-surface: #141419;
-  --gd-surface-raised: #1b1b21;
-  --gd-border: #26262d;
-  --gd-border-strong: #34343d;
-  --gd-text: #f1f0ec;
-  --gd-text-muted: #a3a1a8;
-  --gd-text-faint: #6d6c73;
-  --gd-accent: #f47b3a;
-  --gd-accent-soft: #2c1c12;
-  --gd-accent-contrast: #1a0f08;
-  --gd-success: #4cc47f;
-  --gd-success-soft: #123522;
-  --gd-warning: #e0a63e;
-  --gd-warning-soft: #3a2a0d;
-  --gd-danger: #e56363;
-  --gd-danger-soft: #3a1414;
   color-scheme: dark;
 }
 
@@ -145,9 +87,13 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--gd-border-strong);
+  background: var(--gd-metal-3);
   border-radius: 999px;
   border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gd-metal-2);
   background-clip: content-box;
 }
 ::-webkit-scrollbar-track {
@@ -184,16 +130,93 @@ body {
   animation: gd-pop var(--gd-dur-med) var(--gd-ease-spring) both;
 }
 
-/* A subtle accent glow for primary buttons, in the spirit of a "dark + glossy"
-   direction — not a full rebrand, just enough sparkle on the interactive
-   surfaces that matter most. */
-.gd-glow-hover {
+/* Sweeping shimmer for "this is actively running" text — a lighter band of
+   text color sweeps left to right, like a status line mid-task. */
+@keyframes gd-shimmer {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
+  }
+}
+
+.gd-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--gd-text-muted) 0%,
+    var(--gd-text-muted) 35%,
+    #fff 50%,
+    var(--gd-text-muted) 65%,
+    var(--gd-text-muted) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gd-shimmer 1.8s linear infinite;
+}
+
+/* Primary "billet" surface: light gradient fill + dark text + white glow on
+   hover. This is the one CTA treatment in the whole app — used sparingly. */
+.gd-billet {
+  background: var(--gd-billet);
+  color: var(--gd-accent-contrast);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 1px 0 rgba(0, 0, 0, 0.4);
   transition: box-shadow var(--gd-dur-fast) ease, transform var(--gd-dur-fast) ease, filter var(--gd-dur-fast) ease;
 }
+.gd-billet:hover {
+  border-color: #fff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 40px rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px) scale(1.02);
+}
+.gd-billet:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* White glow hover for non-billet interactive surfaces (secondary buttons,
+   metal chrome). Heats the metal with white light, never a brand hue. Scale
+   (not just color/border) is what actually reads as "alive" at a glance —
+   the original version only shifted border-color, which was too subtle to
+   notice in normal use. */
+.gd-glow-hover {
+  transition: box-shadow var(--gd-dur-fast) var(--gd-ease-spring), transform var(--gd-dur-fast) var(--gd-ease-spring), border-color var(--gd-dur-fast) ease, background var(--gd-dur-fast) ease;
+}
 .gd-glow-hover:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 16px -4px var(--gd-accent);
+  border-color: var(--gd-border-glow);
+  background: var(--gd-accent-soft);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.16);
+  transform: scale(1.1);
 }
 .gd-glow-hover:active {
-  transform: scale(0.97);
+  transform: scale(0.94);
+}
+
+/* Breathing ring for controls that represent live, cancelable work (the
+   composer's stop button) — a passive "something is happening" signal on
+   top of its own hover feedback, not just a static icon. */
+@keyframes gd-pulse-danger {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 92, 92, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(255, 92, 92, 0);
+  }
+}
+.gd-pulse-danger {
+  animation: gd-pulse-danger 1.8s ease-out infinite;
+  transition: transform var(--gd-dur-fast) var(--gd-ease-spring), filter var(--gd-dur-fast) ease;
+}
+.gd-pulse-danger:hover {
+  transform: scale(1.12);
+  filter: brightness(1.25);
+}
+.gd-pulse-danger:active {
+  transform: scale(0.9);
 }

@@ -58,12 +58,20 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
               <button
                 key={o.optionId}
                 onClick={() => choose(o.optionId)}
-                className="text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)] transition"
-                style={{
-                  background: isAllow ? "var(--gd-accent)" : "var(--gd-surface)",
-                  color: isAllow ? "var(--gd-accent-contrast)" : isReject ? "var(--gd-danger)" : "var(--gd-text)",
-                  border: "1px solid var(--gd-border-strong)",
-                }}
+                className={
+                  isAllow
+                    ? "gd-billet text-[12px] font-semibold px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
+                    : "text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)] transition"
+                }
+                style={
+                  isAllow
+                    ? undefined
+                    : {
+                        background: "var(--gd-surface)",
+                        color: isReject ? "var(--gd-danger)" : "var(--gd-text)",
+                        border: "1px solid var(--gd-border-strong)",
+                      }
+                }
               >
                 {o.name ?? o.optionId}
               </button>
@@ -73,8 +81,7 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
           <>
             <button
               onClick={() => choose("allow_once")}
-              className="text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
-              style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+              className="gd-billet text-[12px] font-semibold px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
             >
               Allow once
             </button>

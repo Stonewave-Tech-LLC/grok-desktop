@@ -35,11 +35,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
       style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
     >
       <div className="p-3">
-        <button
-          onClick={onNewSession}
-          className="gd-glow-hover w-full rounded-[var(--gd-radius-md)] px-3 py-2 text-sm font-medium"
-          style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
-        >
+        <button onClick={onNewSession} className="gd-billet w-full rounded-[var(--gd-radius-md)] px-3 py-2 text-sm font-semibold">
           + New Session
         </button>
       </div>
@@ -60,8 +56,11 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
             <div
               key={id}
               onClick={() => !isEditing && setActiveSession(id)}
-              className="w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition-colors duration-150 group cursor-pointer"
-              style={{ background: active ? "var(--gd-accent-soft)" : "transparent" }}
+              className="w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition-colors duration-150 group cursor-pointer border-l-2"
+              style={{
+                background: active ? "var(--gd-accent-soft)" : "transparent",
+                borderLeftColor: active ? "var(--gd-accent)" : "transparent",
+              }}
               onMouseEnter={(e) => {
                 if (!active) e.currentTarget.style.background = "var(--gd-surface-raised)";
               }}
@@ -111,7 +110,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
                       e.stopPropagation();
                       if (window.confirm(`Delete session "${s.title}"?`)) deleteSession(id);
                     }}
-                    className="h-5 w-5 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:!opacity-100"
+                    className="gd-glow-hover h-5 w-5 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:!opacity-100"
                     style={{ color: "var(--gd-text-faint)" }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.color = "var(--gd-danger)";
@@ -147,7 +146,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
       <div className="p-3 border-t" style={{ borderColor: "var(--gd-border)" }}>
         <button
           onClick={() => setSettingsOpen(true)}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium transition hover:brightness-95"
+          className="gd-glow-hover w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium border border-transparent"
           style={{ color: "var(--gd-text-muted)", background: "var(--gd-surface-raised)" }}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">

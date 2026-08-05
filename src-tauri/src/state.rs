@@ -14,4 +14,10 @@ use crate::acp::AcpProcess;
 pub struct GrokState {
     pub process: Arc<AcpProcess>,
     pub init_result: Result<Value, String>,
+    /// Whether *this already-running* process actually has `GROK_MEMORY=1` set —
+    /// resolved once at spawn time. Flipping the Settings toggle mid-session
+    /// writes the config file for *next* launch but must not retroactively
+    /// change what this process reports as active (it can't hot-reload the
+    /// env var of an already-spawned child).
+    pub memory_active: bool,
 }

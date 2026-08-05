@@ -26,7 +26,7 @@ export function NewSessionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
+      className="absolute inset-0 z-50 flex items-center justify-center"
       style={{ background: "rgba(0,0,0,0.45)" }}
       onClick={onClose}
     >
@@ -111,8 +111,7 @@ export function NewSessionDialog({
           <button
             onClick={() => cwd && onCreate(cwd, yolo)}
             disabled={!cwd}
-            className="gd-glow-hover text-[12px] font-medium px-3.5 py-1.5 rounded-[var(--gd-radius-sm)] disabled:opacity-40 disabled:pointer-events-none"
-            style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+            className="gd-billet text-[12px] font-semibold px-3.5 py-1.5 rounded-[var(--gd-radius-sm)] disabled:opacity-40 disabled:pointer-events-none"
           >
             Start
           </button>

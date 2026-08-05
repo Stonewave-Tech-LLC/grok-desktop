@@ -3,11 +3,22 @@ import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPane } from "./components/ChatPane";
 import { Composer } from "./components/Composer";
-import { ActivityDock } from "./components/ActivityDock";
+import { InsightsDock } from "./components/InsightsDock";
 import { Onboarding } from "./components/Onboarding";
 import { NewSessionDialog } from "./components/NewSessionDialog";
 import { useSessionStore } from "./store/sessions";
-import { newSession, sendPrompt, cancelPrompt, checkAuth, initStatus, onAcpEvent } from "./lib/api";
+import {
+  newSession,
+  loadSession,
+  sendPrompt,
+  cancelPrompt,
+  checkAuth,
+  initStatus,
+  onAcpEvent,
+  getMemoryEnabled,
+  memoryRuntimeStatus,
+} from "./lib/api";
+import { MemoryToast } from "./components/MemoryToast";
 
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
@@ -19,25 +30,43 @@ export default function App() {
       .catch(() => setAuthState("unauthenticated"));
   }, []);
 
+  useEffect(() => {
+    getMemoryEnabled().then(setMemoryEnabled).catch(() => {});
+    memoryRuntimeStatus().then(setMemoryActiveThisRun).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const {
     ready,
     setReady,
     setInitError,
     handleAcpEvent,
     sessions,
+    sessionOrder,
     activeSessionId,
     registerSession,
     appendUserMessage,
     pendingPermissions,
     activityDockOpen,
     toggleActivityDock,
+    dockTab,
+    openDockTab,
+    diffsAutoExpand,
+    toggleDiffsAutoExpand,
     lastError,
     setLastError,
     finalizeTurn,
+    memoryActiveThisRun,
+    setMemoryEnabled,
+    setMemoryActiveThisRun,
   } = useSessionStore();
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
   const activityCount = activeSession?.activityOrder.length ?? 0;
+  const activeWorkflowCount = (activeSession?.workflowOrder ?? []).filter((id) => {
+    const status = activeSession?.workflows[id]?.status;
+    return status && status !== "complete" && status !== "failed" && status !== "cancelled";
+  }).length;
 
   // Auto-open the Activity dock the first time this session gets any
   // subagent/background-command activity — mirrors the TUI's own status
@@ -61,11 +90,47 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sessions from a previous app run are restored into the store by the
+  // persist middleware already (their timeline/messages included) — but the
+  // *backend* needs a fresh reattach per session before it'll accept new
+  // prompts for it, since grok's process restarted along with ours.
+  //
+  // A reattach failure here used to delete the session outright — but that
+  // silently destroyed real conversation history on what can easily be a
+  // transient failure (a timing race right after the session was created, a
+  // momentary backend hiccup), not proof the session is actually gone. Keep
+  // the session and its history visible either way; only surface the error,
+  // so sending a *new* message is what tells the user something's actually
+  // wrong (via the existing setLastError path in handleSend) — deleting a
+  // dead session is still one click away if it truly never reconnects.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    (async () => {
+      for (const id of sessionOrder) {
+        const session = sessions[id];
+        if (!session) continue;
+        try {
+          await loadSession(id, session.cwd);
+        } catch (err) {
+          if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when the connection just became ready, not on every
+    // session list change — reattaching already-loaded sessions again would
+    // be redundant work, not incorrect, but there's no reason to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
   async function handleCreateSession(cwd: string, yolo: boolean) {
     setNewSessionDialogOpen(false);
     try {
       const { sessionId } = await newSession(cwd, yolo);
-      registerSession(sessionId, cwd);
+      registerSession(sessionId, cwd, yolo);
     } catch (err) {
       setLastError(`Couldn't start a session: ${String(err)}`);
     }
@@ -126,42 +191,134 @@ export default function App() {
         ) : (
           <>
             <Sidebar onNewSession={() => setNewSessionDialogOpen(true)} />
-            <div className="flex-1 flex min-h-0">
+            <div className="flex-1 flex min-h-0 relative">
               {activeSession ? (
                 <>
                   <div className="flex-1 flex flex-col min-h-0">
                     <div
-                      className="h-9 shrink-0 flex items-center justify-end px-3 border-b gap-2"
+                      className="h-9 shrink-0 flex items-center justify-end px-2.5 border-b gap-1"
                       style={{ borderColor: "var(--gd-border)" }}
                     >
                       <button
-                        onClick={() => toggleActivityDock()}
-                        className="text-[11px] font-medium px-2 py-1 rounded-[var(--gd-radius-sm)] flex items-center gap-1.5"
+                        onClick={toggleDiffsAutoExpand}
+                        aria-label="Show all diffs"
+                        title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
+                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
                         style={{
-                          color: activityDockOpen ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen ? "var(--gd-accent-soft)" : "transparent",
+                          color: diffsAutoExpand ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                          background: diffsAutoExpand ? "var(--gd-accent-soft)" : "transparent",
                         }}
                       >
-                        Activity
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                          <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                          <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                          <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => openDockTab("activity")}
+                        aria-label="Activity"
+                        title="Activity"
+                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
+                        style={{
+                          color: activityDockOpen && dockTab === "activity" ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                          background: activityDockOpen && dockTab === "activity" ? "var(--gd-accent-soft)" : "transparent",
+                        }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                          <path
+                            d="M1.5 8.5h2.5l1.5-4 2 7 1.5-5 1 2H14.5"
+                            stroke="currentColor"
+                            strokeWidth="1.3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
                         {activityCount > 0 && (
                           <span
-                            className="rounded-full px-1.5 text-[10px]"
-                            style={{ background: "var(--gd-surface-raised)" }}
+                            className="absolute -top-1 -right-1 h-3.5 min-w-3.5 px-0.5 rounded-full text-[9px] leading-3.5 font-semibold"
+                            style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
                           >
                             {activityCount}
                           </span>
                         )}
                       </button>
+                      <button
+                        onClick={() => openDockTab("workflows")}
+                        aria-label="Workflows"
+                        title="Workflows"
+                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
+                        style={{
+                          color: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                          background: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent-soft)" : "transparent",
+                        }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                          <circle cx="3" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.2" />
+                          <circle cx="3" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.2" />
+                          <circle cx="12.5" cy="8" r="1.6" stroke="currentColor" strokeWidth="1.2" />
+                          <path d="M4.4 4.6 11 7.4M4.4 11.4 11 8.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                        </svg>
+                        {activeWorkflowCount > 0 && (
+                          <span
+                            className="absolute -top-1 -right-1 h-2 w-2 rounded-full animate-pulse"
+                            style={{ background: "var(--gd-warning)" }}
+                          />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => openDockTab("assets")}
+                        aria-label="Assets"
+                        title="Assets"
+                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
+                        style={{
+                          color: activityDockOpen && dockTab === "assets" ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                          background: activityDockOpen && dockTab === "assets" ? "var(--gd-accent-soft)" : "transparent",
+                        }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                          <rect x="1.5" y="2.5" width="13" height="11" rx="1.3" stroke="currentColor" strokeWidth="1.2" />
+                          <circle cx="5.2" cy="6" r="1.2" stroke="currentColor" strokeWidth="1.1" />
+                          <path d="M2 11.5 6 8l2.5 2 2.5-3 3 3.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </button>
+                      {memoryActiveThisRun && (
+                        <button
+                          onClick={() => openDockTab("memory")}
+                          aria-label="Memory"
+                          title="Memory"
+                          className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
+                          style={{
+                            color: activityDockOpen && dockTab === "memory" ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                            background: activityDockOpen && dockTab === "memory" ? "var(--gd-accent-soft)" : "transparent",
+                          }}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                            <path
+                              d="M8 1.5c-2 0-3.5 1.5-3.5 3.3 0 1 .4 1.7 1 2.3-.7.5-1.2 1.3-1.2 2.4 0 1.8 1.5 3 3.2 3h.5c1.7 0 3.2-1.2 3.2-3 0-1.1-.5-1.9-1.2-2.4.6-.6 1-1.3 1-2.3C11 3 9.5 1.5 7.5 1.5"
+                              stroke="currentColor"
+                              strokeWidth="1.2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                            <path d="M8 5.2v7.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                     <ChatPane session={activeSession} permissions={activePermissions} />
                     <Composer
                       disabled={!ready}
                       isStreaming={activeSession.status === "streaming" || activeSession.status === "thinking"}
+                      sessionId={activeSession.id}
+                      cwd={activeSession.cwd}
+                      yolo={activeSession.yolo}
+                      contextTokensUsed={activeSession.contextTokensUsed}
                       onSend={handleSend}
                       onCancel={handleCancel}
                     />
                   </div>
-                  {activityDockOpen && <ActivityDock sessionId={activeSessionId} />}
+                  {activityDockOpen && <InsightsDock sessionId={activeSessionId} />}
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center">
@@ -175,8 +332,7 @@ export default function App() {
                     <button
                       onClick={() => setNewSessionDialogOpen(true)}
                       disabled={!ready}
-                      className="gd-glow-hover rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-40 disabled:pointer-events-none"
-                      style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+                      className="gd-billet rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
                     >
                       New Session
                     </button>
@@ -190,6 +346,7 @@ export default function App() {
       {newSessionDialogOpen && (
         <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
       )}
+      <MemoryToast />
     </div>
   );
 }

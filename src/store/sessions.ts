@@ -1,5 +1,52 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
+
+// zustand's persist middleware writes on *every* set() call by default — fine
+// for occasional UI-toggle changes, but handleSessionUpdate calls set() once
+// per streamed token, and the persisted payload is the full session history
+// (hundreds of KB once a conversation has any length — confirmed by reading
+// the actual localStorage sqlite file during a live debugging session). Doing
+// a full JSON.stringify + localStorage write on every single token during
+// active streaming is exactly what made the whole app lag/hang while grok was
+// working — it got worse over the session specifically because it scales with
+// how much history had piled up. Debounce the actual write instead of
+// throttling set() itself (which would also delay UI updates); a `pagehide`
+// flush keeps a mid-burst quit from losing more than the last ~400ms.
+function debouncedLocalStorage(delayMs: number) {
+  let pendingValue: string | null = null;
+  let pendingName: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function flush() {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (pendingName !== null && pendingValue !== null) {
+      localStorage.setItem(pendingName, pendingValue);
+      pendingName = null;
+      pendingValue = null;
+    }
+  }
+
+  window.addEventListener("pagehide", flush);
+
+  return {
+    getItem: (name: string) => localStorage.getItem(name),
+    removeItem: (name: string) => {
+      pendingName = null;
+      pendingValue = null;
+      localStorage.removeItem(name);
+    },
+    setItem: (name: string, value: string) => {
+      pendingName = name;
+      pendingValue = value;
+      if (timer) return;
+      timer = setTimeout(flush, delayMs);
+    },
+  };
+}
 
 export interface TimelineItem {
   id: string;
@@ -29,6 +76,49 @@ export interface ActivityItem {
   exitCode?: number;
 }
 
+// Shape confirmed against grok-build's own source
+// (crates/codegen/xai-grok-shell/src/session/workflow/notify.rs +
+// extensions/notification.rs's `WorkflowUpdated` variant) — this is the real
+// mechanism behind `/workflow` and `/goal` parallel-agent runs. There is no
+// separate "arena mode": no arena/candidate/winner/promote code exists
+// anywhere in the grok-build repo.
+export interface WorkflowPhaseInfo {
+  title: string;
+  state: "done" | "active" | "pending";
+}
+
+export interface WorkflowAgentInfo {
+  agentId: string;
+  label: string;
+  phase?: string;
+  model?: string;
+  state: string;
+  tokensUsed: number;
+  durationMs: number;
+}
+
+export interface WorkflowRun {
+  runId: string;
+  revision: number;
+  name: string;
+  objective: string;
+  status: string;
+  phases: WorkflowPhaseInfo[];
+  currentPhase?: string;
+  agentBudget?: number;
+  agentsUsed: number;
+  agentsRemaining?: number;
+  elapsedMs: number;
+  activeAgents: number;
+  currentAgentLabel?: string;
+  agents: WorkflowAgentInfo[];
+  lastEvent?: string;
+  lastEventDetail?: string;
+  pauseMessage?: string;
+  resultSummary?: string;
+  updatedAt: number;
+}
+
 export interface ChatSession {
   id: string;
   cwd: string;
@@ -39,6 +129,21 @@ export interface ChatSession {
   status: "idle" | "thinking" | "streaming" | "error";
   activity: Record<string, ActivityItem>;
   activityOrder: string[];
+  yolo: boolean;
+  // Latest turn's total (input+output, includes cache reads) — a proxy for
+  // "how full is the context window right now", not cumulative spend. Reset
+  // by nothing; each turn just overwrites it.
+  contextTokensUsed?: number;
+  // Cumulative across the whole session — the actual cost-cockpit numbers.
+  // costCumulativeUsdTicks only sums turns whose usage was trustworthy (see
+  // handleXaiNotification's turn_completed branch for the trust rule grok's
+  // own source documents); costEstimated flips true the first time a turn's
+  // cost had to be excluded, so the UI can mark the total as a floor.
+  tokensCumulative: number;
+  costCumulativeUsdTicks: number;
+  costEstimated: boolean;
+  workflows: Record<string, WorkflowRun>;
+  workflowOrder: string[];
 }
 
 export interface PendingPermission {
@@ -61,18 +166,47 @@ interface SessionStoreState {
   activeSessionId?: string;
   pendingPermissions: PendingPermission[];
   activityDockOpen: boolean;
+  dockTab: "activity" | "workflows" | "memory" | "assets";
+  diffsAutoExpand: boolean;
   debugLog: DebugLogLine[];
   lastError?: string;
+  // Mirrors of Rust-owned state (~/.grok-desktop/config.json + GrokState) —
+  // deliberately not persisted here (see partialize below): that config file
+  // is already the authoritative source (it has to be, read before this store
+  // even exists), so re-fetching on launch avoids a second copy that could
+  // drift. memoryEnabled is the saved (next-restart) value; memoryActiveThisRun
+  // is whether the currently-running grok process actually has it on.
+  memoryEnabled: boolean;
+  memoryActiveThisRun: boolean;
+  memoryStatusMessage?: string;
+  // A one-shot prefill for the Composer's input — set by things outside the
+  // Composer itself (e.g. AssetsPanel's "Regenerate" button) that want to hand
+  // it a draft without lifting the Composer's own text state up into the
+  // store. Composer consumes it via useEffect and clears it right after, so
+  // it never persists or refires. Deliberately not persisted (see partialize).
+  composerDraft?: string;
+  // Sessions with a turn WE started this process (via appendUserMessage) and
+  // haven't yet seen finalized (finalizeTurn / turn_completed). Deliberately
+  // NOT persisted (see partialize below) — it exists only to stop a reattached
+  // session's leftover/replayed chunks from resurrecting a "streaming" status
+  // for a turn nobody in this run is actually waiting on. See handleSessionUpdate.
+  activeTurnSessionIds: Set<string>;
 
   setReady: (ready: boolean) => void;
   setInitError: (msg: string) => void;
   setLastError: (msg?: string) => void;
-  registerSession: (id: string, cwd: string) => void;
+  registerSession: (id: string, cwd: string, yolo: boolean) => void;
   setActiveSession: (id: string) => void;
   appendUserMessage: (sessionId: string, text: string) => void;
   handleAcpEvent: (event: AcpEvent) => void;
   resolvePermission: (id: JsonValue) => void;
   toggleActivityDock: (open?: boolean) => void;
+  openDockTab: (tab: "activity" | "workflows" | "memory" | "assets") => void;
+  toggleDiffsAutoExpand: () => void;
+  setMemoryEnabled: (v: boolean) => void;
+  setMemoryActiveThisRun: (v: boolean) => void;
+  setMemoryStatusMessage: (msg?: string) => void;
+  setComposerDraft: (text?: string) => void;
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   finalizeTurn: (sessionId: string) => void;
@@ -117,19 +251,30 @@ function isBackgroundToolCall(update: Record<string, JsonValue>): boolean {
   return rawInput.background === true || rawInput.is_background === true || rawOutput.type === "BackgroundTaskStarted";
 }
 
-export const useSessionStore = create<SessionStoreState>((set) => ({
+export const useSessionStore = create<SessionStoreState>()(
+  persist(
+    (set) => ({
   ready: false,
   sessions: {},
   sessionOrder: [],
   pendingPermissions: [],
   activityDockOpen: false,
+  dockTab: "activity",
+  diffsAutoExpand: false,
   debugLog: [],
+  activeTurnSessionIds: new Set(),
+  memoryEnabled: false,
+  memoryActiveThisRun: false,
 
   setReady: (ready) => set({ ready }),
   setInitError: (msg) => set({ initError: msg }),
   setLastError: (msg) => set({ lastError: msg }),
+  setMemoryEnabled: (v) => set({ memoryEnabled: v }),
+  setMemoryActiveThisRun: (v) => set({ memoryActiveThisRun: v }),
+  setMemoryStatusMessage: (msg) => set({ memoryStatusMessage: msg }),
+  setComposerDraft: (text) => set({ composerDraft: text }),
 
-  registerSession: (id, cwd) =>
+  registerSession: (id, cwd, yolo) =>
     set((s) => ({
       sessions: {
         ...s.sessions,
@@ -143,6 +288,12 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
           status: "idle",
           activity: {},
           activityOrder: [],
+          yolo,
+          tokensCumulative: 0,
+          costCumulativeUsdTicks: 0,
+          costEstimated: false,
+          workflows: {},
+          workflowOrder: [],
         },
       },
       sessionOrder: [id, ...s.sessionOrder],
@@ -173,6 +324,7 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
           ...s.sessions,
           [sessionId]: { ...session, timeline: [...timeline, item], streamingText: "", status: "thinking" },
         },
+        activeTurnSessionIds: new Set(s.activeTurnSessionIds).add(sessionId),
       };
     }),
 
@@ -215,6 +367,9 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
     })),
 
   toggleActivityDock: (open) => set((s) => ({ activityDockOpen: open ?? !s.activityDockOpen })),
+  openDockTab: (tab) =>
+    set((s) => (s.activityDockOpen && s.dockTab === tab ? { activityDockOpen: false } : { activityDockOpen: true, dockTab: tab })),
+  toggleDiffsAutoExpand: () => set((s) => ({ diffsAutoExpand: !s.diffsAutoExpand })),
 
   renameSession: (id, title) =>
     set((s) => {
@@ -245,14 +400,63 @@ export const useSessionStore = create<SessionStoreState>((set) => ({
           { id: uid(), ts: Date.now(), sessionUpdate: "agent_message_final", raw: { text: session.streamingText } },
         ];
       }
+      const activeTurnSessionIds = new Set(s.activeTurnSessionIds);
+      activeTurnSessionIds.delete(sessionId);
       return {
         sessions: {
           ...s.sessions,
           [sessionId]: { ...session, timeline, streamingText: "", status: "idle" },
         },
+        activeTurnSessionIds,
       };
     }),
-}));
+    }),
+    {
+      name: "grok-desktop-sessions",
+      // Debounced so a streaming response's per-token set() calls don't each
+      // trigger a full disk write — see debouncedLocalStorage above.
+      storage: createJSONStorage(() => debouncedLocalStorage(400)),
+      // Only session data survives a restart — connection state, pending
+      // permissions, and UI toggles are all tied to *this* process's live ACP
+      // connection and would be meaningless (or actively wrong) if restored.
+      // streamingText is stripped: it's mid-turn accumulator state that
+      // finalizeTurn/turn_completed always flushes into the timeline before
+      // it'd matter, so persisting it is pure write volume for no benefit.
+      partialize: (s) => ({
+        sessions: Object.fromEntries(
+          Object.entries(s.sessions).map(([id, session]) => [id, { ...session, streamingText: "" }])
+        ),
+        sessionOrder: s.sessionOrder,
+        activeSessionId: s.activeSessionId,
+      }),
+      // A restored session's status ("streaming"/"thinking") describes a turn
+      // that died with the old process — without normalizing it here, the
+      // composer would show a stop button for a request that will never
+      // resolve. `merge` is the hook that actually produces the state zustand
+      // applies via setState — onRehydrateStorage's callback fires *after*
+      // that setState already happened, so mutating its argument there is a
+      // no-op that never triggers a re-render (this was the actual bug).
+      merge: (persisted, current) => {
+        const merged = { ...current, ...(persisted as Partial<SessionStoreState>) };
+        const sessions: Record<string, ChatSession> = {};
+        for (const [id, session] of Object.entries(merged.sessions)) {
+          sessions[id] = {
+            ...session,
+            status: "idle",
+            streamingText: "",
+            yolo: session.yolo ?? false,
+            tokensCumulative: session.tokensCumulative ?? 0,
+            costCumulativeUsdTicks: session.costCumulativeUsdTicks ?? 0,
+            costEstimated: session.costEstimated ?? false,
+            workflows: session.workflows ?? {},
+            workflowOrder: session.workflowOrder ?? [],
+          };
+        }
+        return { ...merged, sessions };
+      },
+    }
+  )
+);
 
 type Setter = (fn: (s: SessionStoreState) => Partial<SessionStoreState>) => void;
 
@@ -276,6 +480,14 @@ function handleSessionUpdate(params: JsonValue, set: Setter) {
     const session = s.sessions[sessionId];
     if (!session) return {};
 
+    // A reattached session can receive leftover/replayed chunks for a turn
+    // nobody in this process asked for (e.g. one that never got a terminal
+    // signal before the app quit or crashed last time) — only a turn WE
+    // started this run via appendUserMessage should be allowed to drive the
+    // "streaming"/"thinking" status, or the stop button gets stuck showing
+    // work that isn't actually happening. Content still records normally.
+    const isActiveTurn = s.activeTurnSessionIds.has(sessionId);
+
     let streamingText = session.streamingText;
     let status = session.status;
     let timeline = session.timeline;
@@ -285,9 +497,9 @@ function handleSessionUpdate(params: JsonValue, set: Setter) {
     if (kind === "agent_message_chunk") {
       const content = asRecord(update.content);
       streamingText += typeof content.text === "string" ? content.text : "";
-      status = "streaming";
+      if (isActiveTurn) status = "streaming";
     } else if (kind === "agent_thought_chunk") {
-      status = "thinking";
+      if (isActiveTurn) status = "thinking";
       const content = asRecord(update.content);
       const text = typeof content.text === "string" ? content.text : "";
       const last = timeline[timeline.length - 1];
@@ -358,6 +570,142 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
   if (!sessionId) return;
   const update = asRecord(p.update);
   const kind = typeof update.sessionUpdate === "string" ? update.sessionUpdate : "";
+
+  // Memory notifications (confirmed shapes from grok-build's own source,
+  // extensions/notification.rs) are global, not session-scoped in the UI —
+  // they drive a transient toast, not any particular ChatSession's state, so
+  // they're handled before the sessionId-dependent branches below. No shared
+  // ID between a `_started` and its matching `_completed`, so each one just
+  // independently produces its own toast text rather than a spinner sequence.
+  if (kind === "memory_flush_started") {
+    set(() => ({ memoryStatusMessage: "Saving memory…" }));
+    return;
+  }
+  if (kind === "memory_flush_completed") {
+    const result = typeof update.result === "string" ? update.result : undefined;
+    set(() => ({ memoryStatusMessage: result ? `Memory saved: ${result.slice(0, 80)}` : "Memory saved" }));
+    return;
+  }
+  if (kind === "memory_dream_completed") {
+    set(() => ({ memoryStatusMessage: "Memory consolidated" }));
+    return;
+  }
+  if (kind === "memory_session_saved") {
+    set(() => ({ memoryStatusMessage: "Session memory saved" }));
+    return;
+  }
+
+  // Confirmed against grok-build's own source (PromptUsage/PromptUsageModel in
+  // extensions/notification.rs): `usage.totalTokens` is THIS TURN's input+output
+  // (a proxy for current context fullness, since chat-completion APIs resend the
+  // whole history as input each turn) — not a running session total. Cost is
+  // only trustworthy when present *and* neither flag below is set; the source's
+  // own doc comment is explicit that absence of cost means "unknown", not "free".
+  if (kind === "turn_completed") {
+    // grok's own source calls this "the durable, replayable signal that a turn
+    // reached its terminal outcome... so a viewer that re-attaches mid-turn can
+    // finalize the turn from replay instead of staying stuck on 'Waiting…'" —
+    // exactly our reattach-after-restart case. `finalizeTurn` (fired when
+    // `session/prompt`'s own RPC promise resolves) used to be the only thing
+    // that ever reset `status`; if the app quit before that promise settled,
+    // the persisted status stayed "streaming"/"thinking" until this replayed
+    // event arrived — which we received but ignored for `status` entirely.
+    const usage = asRecord(update.usage);
+    const totalTokens = typeof usage.totalTokens === "number" ? usage.totalTokens : undefined;
+    const costUsdTicks = typeof usage.costUsdTicks === "number" ? usage.costUsdTicks : undefined;
+    const usageIsIncomplete = usage.usageIsIncomplete === true;
+    const costIsPartial = usage.costIsPartial === true;
+    const trustworthyCost = costUsdTicks !== undefined && !usageIsIncomplete && !costIsPartial;
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      let timeline = session.timeline;
+      if (session.streamingText) {
+        timeline = [
+          ...timeline,
+          { id: uid(), ts: Date.now(), sessionUpdate: "agent_message_final", raw: { text: session.streamingText } },
+        ];
+      }
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: {
+            ...session,
+            timeline,
+            streamingText: "",
+            status: "idle",
+            contextTokensUsed: totalTokens ?? session.contextTokensUsed,
+            tokensCumulative: session.tokensCumulative + (totalTokens ?? 0),
+            costCumulativeUsdTicks: session.costCumulativeUsdTicks + (trustworthyCost ? (costUsdTicks as number) : 0),
+            costEstimated: session.costEstimated || !trustworthyCost,
+          },
+        },
+        activeTurnSessionIds: (() => {
+          const next = new Set(s.activeTurnSessionIds);
+          next.delete(sessionId);
+          return next;
+        })(),
+      };
+    });
+    return;
+  }
+
+  if (kind === "workflow_updated") {
+    const runId = typeof update.run_id === "string" ? update.run_id : undefined;
+    if (!runId) return;
+    const phases = asArray(update.phases).map((p) => {
+      const rec = asRecord(p);
+      return {
+        title: typeof rec.title === "string" ? rec.title : "",
+        state: (rec.state === "done" || rec.state === "active" ? rec.state : "pending") as WorkflowPhaseInfo["state"],
+      };
+    });
+    const agents = asArray(update.agents).map((a) => {
+      const rec = asRecord(a);
+      return {
+        agentId: typeof rec.agent_id === "string" ? rec.agent_id : "",
+        label: typeof rec.label === "string" ? rec.label : "Agent",
+        phase: typeof rec.phase === "string" ? rec.phase : undefined,
+        model: typeof rec.model === "string" ? rec.model : undefined,
+        state: typeof rec.state === "string" ? rec.state : "unknown",
+        tokensUsed: typeof rec.tokens_used === "number" ? rec.tokens_used : 0,
+        durationMs: typeof rec.duration_ms === "number" ? rec.duration_ms : 0,
+      };
+    });
+    const run: WorkflowRun = {
+      runId,
+      revision: typeof update.revision === "number" ? update.revision : 0,
+      name: typeof update.name === "string" ? update.name : "Workflow",
+      objective: typeof update.objective === "string" ? update.objective : "",
+      status: typeof update.status === "string" ? update.status : "active",
+      phases,
+      currentPhase: typeof update.current_phase === "string" ? update.current_phase : undefined,
+      agentBudget: typeof update.agent_budget === "number" ? update.agent_budget : undefined,
+      agentsUsed: typeof update.agents_used === "number" ? update.agents_used : 0,
+      agentsRemaining: typeof update.agents_remaining === "number" ? update.agents_remaining : undefined,
+      elapsedMs: typeof update.elapsed_ms === "number" ? update.elapsed_ms : 0,
+      activeAgents: typeof update.active_agents === "number" ? update.active_agents : 0,
+      currentAgentLabel: typeof update.current_agent_label === "string" ? update.current_agent_label : undefined,
+      agents,
+      lastEvent: typeof update.last_event === "string" ? update.last_event : undefined,
+      lastEventDetail: typeof update.last_event_detail === "string" ? update.last_event_detail : undefined,
+      pauseMessage: typeof update.pause_message === "string" ? update.pause_message : undefined,
+      resultSummary: typeof update.result_summary === "string" ? update.result_summary : undefined,
+      updatedAt: Date.now(),
+    };
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      const workflowOrder = session.workflowOrder.includes(runId) ? session.workflowOrder : [runId, ...session.workflowOrder];
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: { ...session, workflows: { ...session.workflows, [runId]: run }, workflowOrder },
+        },
+      };
+    });
+    return;
+  }
 
   if (kind !== "subagent_spawned" && kind !== "subagent_progress" && kind !== "subagent_finished") return;
 

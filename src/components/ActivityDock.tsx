@@ -83,7 +83,7 @@ function ActivityDetail({ item }: { item: ActivityItem }) {
   );
 }
 
-export function ActivityDock({ sessionId }: { sessionId?: string }) {
+export function ActivityPanel({ sessionId }: { sessionId?: string }) {
   const session = useSessionStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
@@ -92,14 +92,7 @@ export function ActivityDock({ sessionId }: { sessionId?: string }) {
   const selectedItem = items.find((i) => i.id === selected) ?? items[0];
 
   return (
-    <div className="w-80 shrink-0 border-l flex flex-col" style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}>
-      <div
-        className="px-3 py-2.5 border-b text-[12px] font-semibold uppercase tracking-wide"
-        style={{ borderColor: "var(--gd-border)", color: "var(--gd-text-muted)" }}
-      >
-        Activity
-      </div>
-
+    <div className="flex-1 flex flex-col min-h-0">
       <div className="max-h-56 overflow-y-auto p-2 space-y-1 border-b" style={{ borderColor: "var(--gd-border)" }}>
         {items.length === 0 && (
           <div className="px-2 py-6 text-center text-[12px]" style={{ color: "var(--gd-text-faint)" }}>

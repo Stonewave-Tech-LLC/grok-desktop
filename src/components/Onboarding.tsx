@@ -80,8 +80,7 @@ export function Onboarding({ onAuthenticated }: { onAuthenticated: () => void })
           <button
             onClick={handleLogin}
             disabled={status === "starting"}
-            className="rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-medium disabled:opacity-50"
-            style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+            className="gd-billet rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-semibold disabled:opacity-50 disabled:pointer-events-none"
           >
             {status === "starting" ? "Starting…" : "Log in with grok.com"}
           </button>
