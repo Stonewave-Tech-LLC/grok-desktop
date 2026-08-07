@@ -1,6 +1,6 @@
 [package]
 name = "grok-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "Unofficial cross-platform desktop client for xAI's grok CLI (Grok Build)"
 authors = ["Stonewave Tech LLC"]
 edition = "2021"

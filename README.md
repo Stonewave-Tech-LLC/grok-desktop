@@ -18,21 +18,45 @@ directly — it's a real protocol client, not a terminal wrapper. That gets you:
 - **Chat** with streaming responses, markdown and syntax-highlighted code rendering
   (CodeMirror, for JS/TS/Python/Rust/JSON/Markdown; other languages render plainly).
 - **Tool calls** rendered inline as the agent reads files, edits code, and runs
-  commands — including inline diffs for edits, fed straight from grok's own
-  before/after text (no unified-diff parsing needed).
+  commands — including inline diffs for edits (fed straight from grok's own before/after
+  text) and plain-language descriptions instead of raw shell commands.
 - **Permission prompts** rendered inline as part of the conversation, built from
   whatever options the request actually offers rather than a hardcoded allow/deny.
 - **An Activity dock** — grok's own subagents and background shell commands shown as
-  live status cards (a GUI take on the CLI's own Tasks pane), instead of being
-  invisible or buried in scrollback. Auto-opens the first time a session gets any.
-- **Sessions** — new / switch / rename / delete for the current app run. Login is
-  handled in-app too: a first-run screen drives `grok login --device-auth` and opens
-  the browser for you.
+  live status cards, instead of being invisible or buried in scrollback. Auto-opens the
+  first time a session gets any.
+- **A Cost Cockpit and Workflow Dashboard** — live cumulative token/cost tracking per
+  session, plus a real-time view into grok's own `/workflow` and `/goal` multi-agent
+  runs (phases, active agents, budget) instead of just a status line.
+- **Native Grok-Imagine integration** — generated images and videos render inline in
+  their tool-call cards with a lightbox and one-click download, and an **Asset
+  Manager** panel gathers everything generated across every session into one grid, with
+  a "regenerate variation" shortcut that prefills the composer.
+- **Anvil Memory** — an optional, structured memory system (typed entries: project,
+  decision, issue, person, preference, reference) that lives as plain markdown files and
+  bridges into grok's own native memory, so context survives across sessions instead of
+  starting from zero every time.
+- **Sessions** that survive an app restart — new / switch / rename / delete, with
+  history persisted locally and the backend connection reattached automatically on
+  launch. Login is handled in-app too: a first-run screen drives `grok login
+  --device-auth` and opens the browser for you.
+- A floating, resizable Insights dock (Activity / Workflows / Assets / Memory) that
+  overlays the chat instead of squeezing it, and a two-pane Settings modal.
 
 ## Status
 
-Early and under active development. See [Roadmap](#roadmap) below for what's
-deliberately not in yet.
+Actively developed and used daily. The core chat/tool-call/permission loop, session
+persistence, and the panels above are all solid. See [Roadmap](#roadmap) for what's
+deliberately still out — mainly polish items (signed builds, a dedicated file browser,
+voice mode) rather than gaps in the core experience.
+
+## Download
+
+Prebuilt binaries aren't published on a regular cadence yet — see
+[Releases](https://github.com/Stonewave-Tech-LLC/grok-desktop/releases) for the latest
+one, or build from source below. Builds are currently **unsigned**: macOS will warn
+about an unidentified developer and Windows SmartScreen will flag an unknown publisher
+on first launch — expected until code-signing is set up (see Roadmap).
 
 ## Getting started
 
@@ -43,8 +67,7 @@ curl -fsSL https://x.ai/cli/install.sh | bash
 grok login
 ```
 
-Then build Grok Desktop from source (no prebuilt binaries are published yet — see
-[Roadmap](#roadmap)):
+Then build Grok Desktop from source:
 
 **Prerequisites:** [Rust](https://rustup.rs), [Node.js](https://nodejs.org) 18+, and
 the platform build tools [Tauri requires](https://v2.tauri.app/start/prerequisites/)
@@ -64,6 +87,7 @@ npm run tauri build  # release build
 - **`src-tauri/`** — Rust/Tauri backend. Owns the `grok agent stdio` child process,
   frames newline-delimited JSON-RPC 2.0 over its stdin/stdout, and bridges it to the
   frontend as Tauri commands/events. See [`src-tauri/src/acp/`](src-tauri/src/acp/).
+  `memory.rs` owns the Anvil Memory store independently of the ACP connection.
 - **`src/`** — React/TypeScript frontend (Vite, Tailwind, CodeMirror for code/diffs).
 - **`docs/protocol-notes/`** — captured real-world ACP traffic from `grok agent stdio`,
   used to build the client instead of guessing at wire shapes. Might be useful if
@@ -76,8 +100,6 @@ stays honest:
 
 - A standalone file tree / browser view (inline diffs in the chat cover the common
   case today; a dedicated Files tab for browsing the whole workspace is next)
-- Session history that survives an app restart (sessions currently live for the app's
-  run, backed by the live ACP connection, not yet reloaded from grok's on-disk store)
 - Live streaming sub-transcripts for subagents (today: periodic progress + a final
   summary — that's all the protocol exposes on the parent's own event stream; see
   `docs/protocol-notes/`)
@@ -89,6 +111,9 @@ stays honest:
 - Signed & notarized release builds (needs a paid Apple Developer Program / Windows
   code-signing cert — not set up yet)
 - Auto-update
+- CI that produces and publishes real installer artifacts (today's CI only
+  compile-checks on macOS/Linux/Windows; release builds are produced and published
+  manually)
 
 ## Contributing
 
