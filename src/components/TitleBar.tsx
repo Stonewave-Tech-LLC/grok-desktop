@@ -1,6 +1,11 @@
+import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const win = getCurrentWindow();
+
+// No `@tauri-apps/plugin-os` dependency in this project — a UA sniff is enough
+// to pick a control style, we don't need real OS APIs for anything else here.
+const isWindows = navigator.userAgent.includes("Windows");
 
 function TrafficLight({
   color,
@@ -35,12 +40,88 @@ function TrafficLight({
   );
 }
 
-function WindowControls() {
+function MacWindowControls() {
   return (
     <div className="flex items-center gap-2 shrink-0">
       <TrafficLight color="#ff5f57" glyph="✕" label="Close" onClick={() => win.close()} />
       <TrafficLight color="#febc2e" glyph="−" label="Minimize" onClick={() => win.minimize()} />
       <TrafficLight color="#28c840" glyph="+" label="Zoom" onClick={() => win.toggleMaximize()} />
+    </div>
+  );
+}
+
+function CaptionButton({
+  label,
+  onClick,
+  danger,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      aria-label={label}
+      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      className="h-full w-[46px] flex items-center justify-center transition-colors"
+      style={{ color: "var(--gd-text-muted)" }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = danger ? "#e81123" : "var(--gd-accent-soft)";
+        e.currentTarget.style.color = danger ? "#fff" : "var(--gd-text)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--gd-text-muted)";
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Windows convention: minimize / maximize-restore / close, rectangular,
+// right-aligned, close hover turns red — matches every native Win32/UWP app
+// (Explorer, Settings, Notepad) instead of the macOS traffic-light metaphor.
+function WindowsWindowControls() {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    win.isMaximized().then(setMaximized);
+    const unlisten = win.onResized(() => {
+      win.isMaximized().then(setMaximized);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  return (
+    <div className="flex items-center h-full shrink-0">
+      <CaptionButton label="Minimize" onClick={() => win.minimize()}>
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M0 5h10" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </CaptionButton>
+      <CaptionButton label={maximized ? "Restore" : "Maximize"} onClick={() => win.toggleMaximize()}>
+        {maximized ? (
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="2.5" y="0.5" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1" />
+            <path d="M0.5 2.5h7v7h-7z" fill="var(--gd-surface)" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        ) : (
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
+          </svg>
+        )}
+      </CaptionButton>
+      <CaptionButton label="Close" onClick={() => win.close()} danger>
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </CaptionButton>
     </div>
   );
 }
@@ -59,15 +140,24 @@ function handleDragMouseDown(e: React.MouseEvent) {
 }
 
 export function TitleBar({ title }: { title: string }) {
+  const leading = isWindows ? (
+    <div className="w-[68px] h-full shrink-0" />
+  ) : (
+    <MacWindowControls />
+  );
+  const trailing = isWindows ? <WindowsWindowControls /> : (
+    <div data-tauri-drag-region onMouseDown={handleDragMouseDown} className="w-[68px] h-full" />
+  );
+
   return (
     <div
-      className="h-10 shrink-0 flex items-center justify-between px-3 select-none border-b"
+      className="h-10 shrink-0 flex items-center justify-between select-none border-b"
       style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
     >
       {/* The drag region lives only on the empty title/spacer areas, never
-          on an ancestor of the traffic-light buttons — nesting it around
+          on an ancestor of the window-control buttons — nesting it around
           the buttons is what silently ate their clicks. */}
-      <WindowControls />
+      <div className={isWindows ? "" : "pl-3"}>{leading}</div>
       <div
         data-tauri-drag-region
         onMouseDown={handleDragMouseDown}
@@ -76,7 +166,7 @@ export function TitleBar({ title }: { title: string }) {
       >
         {title}
       </div>
-      <div data-tauri-drag-region onMouseDown={handleDragMouseDown} className="w-[68px] h-full" />
+      {trailing}
     </div>
   );
 }

@@ -20,7 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let binary = grok_binary::resolve()
-                .ok_or("grok CLI not found on PATH or in ~/.grok/bin/grok")?;
+                .ok_or("grok CLI not found on PATH or in ~/.grok/bin")?;
 
             let handle = app.handle().clone();
             let on_event: acp::process::EventCallback = Arc::new(move |event| {
