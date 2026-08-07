@@ -52,11 +52,10 @@ voice mode) rather than gaps in the core experience.
 
 ## Download
 
-macOS (Apple Silicon) builds are published on
-[Releases](https://github.com/Stonewave-Tech-LLC/grok-desktop/releases). Windows isn't
-published there yet — the current build doesn't reliably launch, still being worked on;
-build from source below in the meantime. Builds are currently **unsigned**: macOS will
-warn about an unidentified developer on first launch (right-click → Open) — expected
+macOS (Apple Silicon) and Windows (x64) builds are published on
+[Releases](https://github.com/Stonewave-Tech-LLC/grok-desktop/releases). Builds are
+currently **unsigned**: macOS will warn about an unidentified developer on first launch
+(right-click → Open) and Windows SmartScreen will flag an unknown publisher — expected
 until code-signing is set up (see Roadmap).
 
 ## Getting started
