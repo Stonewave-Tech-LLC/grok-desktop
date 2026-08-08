@@ -40,6 +40,15 @@ export async function denyPermission(id: JsonValue): Promise<void> {
   await invoke("deny_permission", { id });
 }
 
+/// Answers an ACP `ext_method` request (`x.ai/exit_plan_mode`,
+/// `x.ai/ask_user_question`) with an exact, pre-shaped result — these don't
+/// share `session/request_permission`'s response envelope (confirmed against
+/// grok-build's own wire types), so the caller builds the whole `result`
+/// value itself; see PlanApprovalCard/AskUserQuestionCard.
+export async function respondExt(id: JsonValue, result: JsonValue): Promise<void> {
+  await invoke("respond_ext", { id, result });
+}
+
 export function onAcpEvent(handler: (event: AcpEvent) => void): Promise<UnlistenFn> {
   return listen<AcpEvent>("acp-event", (e) => handler(e.payload));
 }
@@ -188,4 +197,28 @@ export async function writeAnvilEntry(
 
 export async function deleteAnvilEntry(path: string, cwd?: string): Promise<void> {
   await invoke("delete_anvil_entry", { path, cwd });
+}
+
+// ───────────────────────── Voice mode ─────────────────────────
+
+export interface VoiceEvent {
+  type: "locale" | "ready" | "partial" | "final" | "error" | "ended";
+  text?: string;
+  message?: string;
+}
+
+/// Starts a new voice-recognition session (kills any previous one first).
+/// Live results stream in via `onVoiceEvent`, not this call's return value.
+export async function startVoice(): Promise<void> {
+  await invoke("start_voice");
+}
+
+/// Signals the current session to stop — it still emits one last "final" (if
+/// anything was recognized) and an "ended" event before actually exiting.
+export async function stopVoice(): Promise<void> {
+  await invoke("stop_voice");
+}
+
+export function onVoiceEvent(handler: (event: VoiceEvent) => void): Promise<UnlistenFn> {
+  return listen<VoiceEvent>("voice-event", (e) => handler(e.payload));
 }

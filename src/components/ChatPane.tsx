@@ -3,6 +3,8 @@ import type { ChatSession, PendingPermission } from "../store/sessions";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ToolCallCard } from "./ToolCallCard";
 import { PermissionCard } from "./PermissionCard";
+import { PlanApprovalCard } from "./PlanApprovalCard";
+import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { useSessionStore } from "../store/sessions";
 
 function ThinkingDots() {
@@ -139,9 +141,21 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
 
         {session.status === "thinking" && !session.streamingText && <ThinkingDots />}
 
-        {permissions.map((p) => (
-          <PermissionCard key={JSON.stringify(p.id)} permission={p} onResolved={() => resolvePermission(p.id)} />
-        ))}
+        {permissions.map((p) => {
+          const key = JSON.stringify(p.id);
+          const onResolved = () => resolvePermission(p.id);
+          // exit_plan_mode/ask_user_question are ACP ext_methods with their own
+          // response shapes — genuinely different from a regular tool-permission
+          // request, not just a styling choice. See those cards' own doc
+          // comments for the (confirmed against grok-build's source) wire shapes.
+          if (p.method === "x.ai/exit_plan_mode") {
+            return <PlanApprovalCard key={key} permission={p} onResolved={onResolved} />;
+          }
+          if (p.method === "x.ai/ask_user_question") {
+            return <AskUserQuestionCard key={key} permission={p} onResolved={onResolved} />;
+          }
+          return <PermissionCard key={key} permission={p} onResolved={onResolved} />;
+        })}
 
         <div ref={bottomRef} />
       </div>

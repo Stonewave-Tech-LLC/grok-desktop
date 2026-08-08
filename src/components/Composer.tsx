@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { currentModelInfo, pickFiles, type ModelInfo } from "../lib/api";
+import { currentModelInfo, pickFiles, startVoice, stopVoice, onVoiceEvent, type ModelInfo } from "../lib/api";
 import { TokenUsagePopover } from "./TokenUsagePopover";
 import { useSessionStore } from "../store/sessions";
 
@@ -41,9 +41,22 @@ export function Composer({
   const [dragging, setDragging] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
   const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>(undefined);
+  const [listening, setListening] = useState(false);
+  const [voiceLocale, setVoiceLocale] = useState<string | undefined>(undefined);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Text already in the box when voice mode starts — live transcript updates
+  // append after this instead of clobbering it, so starting voice mode with
+  // a half-typed message doesn't just throw it away.
+  const voicePrefixRef = useRef("");
+  // Guards against a trailing "partial"/"final" event landing after the user
+  // already finalized (first Enter) or sent (second Enter) — the helper's
+  // stop is a signal, not instant, so a stray late event is expected, not a
+  // bug; it just shouldn't be allowed to overwrite text the user has already
+  // moved past.
+  const listeningRef = useRef(false);
   const composerDraft = useSessionStore((s) => s.composerDraft);
   const setComposerDraft = useSessionStore((s) => s.setComposerDraft);
+  const setLastError = useSessionStore((s) => s.setLastError);
 
   useEffect(() => {
     currentModelInfo()
@@ -67,6 +80,61 @@ export function Composer({
       }
     });
   }, [composerDraft, setComposerDraft]);
+
+  // Live speech-to-text updates from the native voice helper — see
+  // src-tauri/src/voice.rs. Subscribed once for the component's lifetime;
+  // `listeningRef` (not the `listening` state) gates whether an event still
+  // applies, so this closure doesn't need to be re-subscribed on every
+  // start/stop.
+  useEffect(() => {
+    const unlisten = onVoiceEvent((event) => {
+      if (event.type === "locale") {
+        setVoiceLocale(event.text);
+      } else if (event.type === "partial" || event.type === "final") {
+        if (!listeningRef.current) return;
+        const prefix = voicePrefixRef.current;
+        const spoken = event.text ?? "";
+        const next = prefix.trim() ? `${prefix.trim()} ${spoken}` : spoken;
+        setText(next);
+      } else if (event.type === "error") {
+        listeningRef.current = false;
+        setListening(false);
+        setLastError(`Voice mode: ${event.message ?? "unknown error"}`);
+      }
+      // "ready"/"ended" are informational only — listening state is driven
+      // by the button/Enter handlers, not by these.
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function toggleVoice() {
+    if (listening) {
+      finalizeVoice();
+      return;
+    }
+    voicePrefixRef.current = text;
+    listeningRef.current = true;
+    setListening(true);
+    try {
+      await startVoice();
+    } catch (err) {
+      listeningRef.current = false;
+      setListening(false);
+      setLastError(`Couldn't start voice mode: ${String(err)}`);
+    }
+  }
+
+  // Stops listening and keeps whatever's currently in the box as normal,
+  // committed input — does NOT send it. A second, separate Enter (now that
+  // listening is false) goes through the regular submit() path below.
+  function finalizeVoice() {
+    listeningRef.current = false;
+    setListening(false);
+    stopVoice().catch(() => {});
+  }
 
   // Files dropped anywhere on the window while this composer is mounted —
   // grok's own CLI convention for attaching a file is `@relative/path` inline
@@ -145,11 +213,23 @@ export function Composer({
               </svg>
             </button>
             <button
-              disabled
-              aria-label="Voice mode (coming soon)"
-              title="Voice mode — coming soon"
-              className="h-8 w-8 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-30 cursor-not-allowed"
-              style={{ color: "var(--gd-text-muted)", border: "1px solid var(--gd-border)" }}
+              onClick={toggleVoice}
+              disabled={disabled}
+              aria-label={listening ? "Stop voice mode" : "Voice mode"}
+              title={
+                listening
+                  ? `Listening${voiceLocale ? ` (${voiceLocale})` : ""} — click or press Enter to stop`
+                  : "Voice mode"
+              }
+              className={
+                (listening ? "gd-pulse-accent" : "gd-glow-hover") +
+                " h-8 w-8 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition disabled:opacity-40 disabled:pointer-events-none"
+              }
+              style={{
+                color: listening ? "var(--gd-accent-contrast)" : "var(--gd-text-muted)",
+                background: listening ? "var(--gd-accent)" : "transparent",
+                border: listening ? "1px solid var(--gd-accent)" : "1px solid var(--gd-border)",
+              }}
             >
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <rect x="6" y="1.5" width="4" height="7" rx="2" stroke="currentColor" strokeWidth="1.3" />
@@ -214,12 +294,20 @@ export function Composer({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  submit();
+                  if (listening) {
+                    finalizeVoice();
+                  } else {
+                    submit();
+                  }
                 }
               }}
               rows={1}
               className="flex-1 resize-none bg-transparent outline-none text-[14px] py-1 leading-relaxed"
-              style={{ color: "var(--gd-text)", maxHeight: 200 }}
+              style={{
+                color: listening ? "var(--gd-text-muted)" : "var(--gd-text)",
+                fontStyle: listening ? "italic" : "normal",
+                maxHeight: 200,
+              }}
             />
             {isStreaming ? (
               <button

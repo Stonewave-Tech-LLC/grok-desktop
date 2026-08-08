@@ -138,6 +138,18 @@ pub fn deny_permission(state: State<'_, GrokState>, id: Value) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
+/// Answers an ACP `ext_method` request (`x.ai/exit_plan_mode`,
+/// `x.ai/ask_user_question`) with an exact, pre-shaped result — unlike
+/// `respond_permission`, these don't share the standard `session/request_permission`
+/// response envelope (confirmed against grok-build's own wire types:
+/// `ExitPlanModeExtResponse`/`AskUserQuestionExtResponse` in
+/// `xai-grok-tools/src/implementations/grok_build/*/types.rs`), so the
+/// frontend builds the whole response value itself and this just relays it.
+#[tauri::command]
+pub fn respond_ext(state: State<'_, GrokState>, id: Value, result: Value) -> Result<(), String> {
+    state.process.respond(id, result).map_err(|e| e.to_string())
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedImage {

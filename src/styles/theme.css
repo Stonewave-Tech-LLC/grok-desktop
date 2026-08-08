@@ -220,3 +220,24 @@ body {
 .gd-pulse-danger:active {
   transform: scale(0.9);
 }
+
+@keyframes gd-pulse-accent {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 232, 236, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgba(232, 232, 236, 0);
+  }
+}
+.gd-pulse-accent {
+  animation: gd-pulse-accent 1.8s ease-out infinite;
+  transition: transform var(--gd-dur-fast) var(--gd-ease-spring), filter var(--gd-dur-fast) ease;
+}
+.gd-pulse-accent:hover {
+  transform: scale(1.12);
+  filter: brightness(1.25);
+}
+.gd-pulse-accent:active {
+  transform: scale(0.9);
+}

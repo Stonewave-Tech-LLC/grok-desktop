@@ -4,6 +4,7 @@ mod commands;
 mod grok_binary;
 mod memory;
 mod state;
+mod voice;
 
 use std::sync::Arc;
 
@@ -66,6 +67,7 @@ pub fn run() {
             })?;
 
             app.manage(GrokState { process, init_result, memory_active });
+            app.manage(voice::VoiceState::default());
 
             Ok(())
         })
@@ -79,6 +81,7 @@ pub fn run() {
             commands::cancel_prompt,
             commands::respond_permission,
             commands::deny_permission,
+            commands::respond_ext,
             commands::read_image_data_url,
             commands::save_image_as,
             auth::check_auth,
@@ -90,6 +93,8 @@ pub fn run() {
             memory::read_anvil_entry,
             memory::write_anvil_entry,
             memory::delete_anvil_entry,
+            voice::start_voice,
+            voice::stop_voice,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

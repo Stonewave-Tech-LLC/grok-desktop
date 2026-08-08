@@ -1,6 +1,7 @@
 import type { PendingPermission } from "../store/sessions";
 import type { JsonValue } from "../types/acp";
 import { respondPermission, denyPermission } from "../lib/api";
+import { extractDescription, extractCommand } from "../lib/toolCallDisplay";
 
 interface PermissionOption {
   optionId: string;
@@ -26,10 +27,17 @@ function extractOptions(params: Record<string, JsonValue>): PermissionOption[] {
 export function PermissionCard({ permission, onResolved }: { permission: PendingPermission; onResolved: () => void }) {
   const options = extractOptions(permission.params);
   const toolCall = permission.params.toolCall as Record<string, JsonValue> | undefined;
-  const title =
+  const rawTitle =
     (toolCall && typeof toolCall.title === "string" && toolCall.title) ||
     (typeof permission.params.title === "string" && permission.params.title) ||
     "Permission requested";
+  // Same fix as ToolCallCard: prefer grok's own plain-language explanation
+  // over the raw, often-truncated tool title — this is a *decision* the user
+  // has to make before anything runs, so illegible titles are worse here
+  // than in the historical tool-call log.
+  const description = toolCall ? extractDescription(toolCall) : undefined;
+  const command = toolCall ? extractCommand(toolCall) : undefined;
+  const title = description || rawTitle;
 
   async function choose(optionId: string) {
     await respondPermission(permission.id, optionId);
@@ -49,6 +57,19 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
       <div className="text-[13px] font-medium mb-2" style={{ color: "var(--gd-text)" }}>
         {title}
       </div>
+      {command && (
+        <div className="mb-2.5">
+          <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: "var(--gd-text-faint)" }}>
+            Command
+          </div>
+          <pre
+            className="whitespace-pre-wrap break-words font-mono text-[11.5px] p-2 rounded-[var(--gd-radius-sm)] max-h-40 overflow-y-auto"
+            style={{ background: "var(--gd-bg)", color: "var(--gd-text)" }}
+          >
+            {command}
+          </pre>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {options.length > 0 ? (
           options.map((o) => {

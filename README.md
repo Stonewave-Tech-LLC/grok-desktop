@@ -21,7 +21,13 @@ directly — it's a real protocol client, not a terminal wrapper. That gets you:
   commands — including inline diffs for edits (fed straight from grok's own before/after
   text) and plain-language descriptions instead of raw shell commands.
 - **Permission prompts** rendered inline as part of the conversation, built from
-  whatever options the request actually offers rather than a hardcoded allow/deny.
+  whatever options the request actually offers rather than a hardcoded allow/deny —
+  including dedicated cards for plan-mode approval and grok's multiple-choice
+  question tool, which speak their own ACP `ext_method` wire shapes rather than the
+  generic permission-response envelope.
+- **Voice mode** (macOS) — click to dictate, live transcript shown inline in the
+  composer, using the OS's own on-device speech recognition. Windows support is
+  planned; see Roadmap.
 - **An Activity dock** — grok's own subagents and background shell commands shown as
   live status cards, instead of being invisible or buried in scrollback. Auto-opens the
   first time a session gets any.
@@ -48,7 +54,7 @@ directly — it's a real protocol client, not a terminal wrapper. That gets you:
 Actively developed and used daily. The core chat/tool-call/permission loop, session
 persistence, and the panels above are all solid. See [Roadmap](#roadmap) for what's
 deliberately still out — mainly polish items (signed builds, a dedicated file browser,
-voice mode) rather than gaps in the core experience.
+Windows voice mode) rather than gaps in the core experience.
 
 ## Download
 
@@ -107,7 +113,7 @@ stays honest:
 - MCP server management UI
 - Plugin browser
 - Worktree management UI
-- Voice mode
+- Voice mode on Windows (macOS is done — see What it does)
 - Signed & notarized release builds (needs a paid Apple Developer Program / Windows
   code-signing cert — not set up yet)
 - Auto-update

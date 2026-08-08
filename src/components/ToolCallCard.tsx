@@ -5,6 +5,7 @@ import { useSessionStore } from "../store/sessions";
 import { readImageDataUrl } from "../lib/api";
 import { GeneratedImage } from "./GeneratedImage";
 import { extractMediaGen } from "../lib/assets";
+import { extractDescription, extractCommand } from "../lib/toolCallDisplay";
 
 const KIND_ICON: Record<string, string> = {
   read: "▤",
@@ -101,23 +102,6 @@ function ImagePreview({ path, filename }: { path: string; filename: string }) {
       )}
     </div>
   );
-}
-
-// grok attaches a plain-language `description` to run_terminal_command calls
-// (confirmed live: {"command": "...", "description": "Locate memory storage
-// locations"}) — a genuine "why is it doing this" explanation that we were
-// only ever showing buried in the collapsed Raw JSON dump. Prefer it over the
-// raw "Execute `<command>`" title for the at-a-glance row; the exact command
-// still gets its own clearly-labeled block once expanded (see below), instead
-// of only being visible truncated in that title or buried in Raw.
-function extractDescription(raw: Record<string, JsonValue>): string | undefined {
-  const rawInput = asRecord(raw.rawInput);
-  return typeof rawInput.description === "string" ? rawInput.description : undefined;
-}
-
-function extractCommand(raw: Record<string, JsonValue>): string | undefined {
-  const rawInput = asRecord(raw.rawInput);
-  return typeof rawInput.command === "string" ? rawInput.command : undefined;
 }
 
 function extractTextOutput(raw: Record<string, JsonValue>): string | undefined {
