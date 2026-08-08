@@ -5,6 +5,7 @@ mod grok_binary;
 mod memory;
 mod state;
 mod voice;
+mod windows_util;
 
 use std::sync::Arc;
 

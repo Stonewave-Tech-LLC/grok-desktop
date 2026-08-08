@@ -5,6 +5,8 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
@@ -14,10 +16,11 @@ use crate::grok_binary;
 #[tauri::command]
 pub fn check_auth() -> Result<bool, String> {
     let binary = grok_binary::resolve().ok_or_else(|| "grok CLI not found".to_string())?;
-    let output = Command::new(binary)
-        .arg("models")
-        .output()
-        .map_err(|e| e.to_string())?;
+    let mut command = Command::new(binary);
+    command.arg("models");
+    #[cfg(windows)]
+    command.creation_flags(crate::windows_util::CREATE_NO_WINDOW);
+    let output = command.output().map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.contains("You are logged in") || stdout.contains("Default model"))
 }
@@ -43,12 +46,14 @@ pub fn start_device_login(app: AppHandle) -> Result<(), String> {
     let binary = grok_binary::resolve().ok_or_else(|| "grok CLI not found".to_string())?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut child = match Command::new(&binary)
+        let mut command = Command::new(&binary);
+        command
             .args(["login", "--device-auth"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        command.creation_flags(crate::windows_util::CREATE_NO_WINDOW);
+        let mut child = match command.spawn() {
             Ok(c) => c,
             Err(e) => {
                 let _ = app.emit(

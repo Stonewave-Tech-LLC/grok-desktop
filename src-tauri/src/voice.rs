@@ -86,11 +86,15 @@ pub async fn start_voice(app: AppHandle, state: State<'_, VoiceState>) -> Result
         "Voice helper isn't available for this platform yet".to_string()
     })?;
 
-    let mut child = Command::new(&path)
+    let mut command = Command::new(&path);
+    command
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(crate::windows_util::CREATE_NO_WINDOW);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("Couldn't start voice helper: {e}"))?;
 

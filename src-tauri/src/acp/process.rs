@@ -55,6 +55,8 @@ impl AcpProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(crate::windows_util::CREATE_NO_WINDOW);
         let mut child = command.spawn()?;
 
         let stdin = child.stdin.take().expect("stdin was piped");
