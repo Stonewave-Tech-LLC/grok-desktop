@@ -66,16 +66,10 @@ function CaptionButton({
       aria-label={label}
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}
-      className="h-full w-[46px] flex items-center justify-center transition-colors"
-      style={{ color: "var(--gd-text-muted)" }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = danger ? "#e81123" : "var(--gd-accent-soft)";
-        e.currentTarget.style.color = danger ? "#fff" : "var(--gd-text)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "var(--gd-text-muted)";
-      }}
+      className={
+        "h-full w-[46px] flex items-center justify-center transition-colors bg-transparent text-[var(--gd-text-muted)] " +
+        (danger ? "hover:bg-[#e81123] hover:text-white" : "hover:bg-[var(--gd-accent-soft)] hover:text-[var(--gd-text)]")
+      }
     >
       {children}
     </button>

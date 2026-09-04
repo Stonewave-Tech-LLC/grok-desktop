@@ -241,3 +241,82 @@ body {
 .gd-pulse-accent:active {
   transform: scale(0.9);
 }
+
+/* Ambient background layer — the metal-dark chrome felt flat next to the
+   marketing site's orb/noise/vignette treatment (anvil-site globals.css).
+   Ported down for a WebView budget: no filter:blur() (GPU-expensive to run
+   continuously in a webview), just soft radial-gradient falloff instead, and
+   a static (non-animated) noise layer so the only ongoing animation cost is
+   two cheap transform/opacity tweens. Stays monochrome per the header note
+   above — white glow, not a brand hue. */
+.gd-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.gd-ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform, opacity;
+}
+
+.gd-ambient-orb-1 {
+  top: -20%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 70%);
+  animation: gd-ambient-drift-1 34s var(--gd-ease) infinite alternate;
+}
+
+.gd-ambient-orb-2 {
+  bottom: -25%;
+  right: -15%;
+  width: 65%;
+  height: 65%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 70%);
+  animation: gd-ambient-drift-2 42s var(--gd-ease) infinite alternate;
+}
+
+@keyframes gd-ambient-drift-1 {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(4%, 6%) scale(1.12);
+    opacity: 0.9;
+  }
+}
+
+@keyframes gd-ambient-drift-2 {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-5%, -4%) scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+/* Static grain — a single inline SVG feTurbulence data-URI, painted once,
+   never re-rendered per frame. Kills the "flat plastic" look of a single
+   solid fill without costing anything at runtime. */
+.gd-ambient-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gd-ambient-orb-1,
+  .gd-ambient-orb-2 {
+    animation: none;
+  }
+}

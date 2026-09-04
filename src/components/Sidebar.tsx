@@ -56,17 +56,11 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
             <div
               key={id}
               onClick={() => !isEditing && setActiveSession(id)}
-              className="w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition-colors duration-150 group cursor-pointer border-l-2"
-              style={{
-                background: active ? "var(--gd-accent-soft)" : "transparent",
-                borderLeftColor: active ? "var(--gd-accent)" : "transparent",
-              }}
-              onMouseEnter={(e) => {
-                if (!active) e.currentTarget.style.background = "var(--gd-surface-raised)";
-              }}
-              onMouseLeave={(e) => {
-                if (!active) e.currentTarget.style.background = "transparent";
-              }}
+              className={
+                "w-full text-left rounded-[var(--gd-radius-sm)] px-2.5 py-2 transition-colors duration-150 group cursor-pointer border-l-2 " +
+                (active ? "bg-[var(--gd-accent-soft)]" : "bg-transparent hover:bg-[var(--gd-surface-raised)]")
+              }
+              style={{ borderLeftColor: active ? "var(--gd-accent)" : "transparent" }}
             >
               <div className="flex items-center justify-between gap-2">
                 {isEditing ? (
@@ -110,16 +104,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
                       e.stopPropagation();
                       if (window.confirm(`Delete session "${s.title}"?`)) deleteSession(id);
                     }}
-                    className="gd-glow-hover h-5 w-5 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:!opacity-100"
-                    style={{ color: "var(--gd-text-faint)" }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.color = "var(--gd-danger)";
-                      e.currentTarget.style.background = "var(--gd-danger-soft)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = "var(--gd-text-faint)";
-                      e.currentTarget.style.background = "transparent";
-                    }}
+                    className="h-5 w-5 rounded-[var(--gd-radius-sm)] flex items-center justify-center opacity-0 group-hover:opacity-100 transition hover:!opacity-100 bg-transparent text-[var(--gd-text-faint)] hover:bg-[var(--gd-danger-soft)] hover:text-[var(--gd-danger)] hover:scale-110 active:scale-90"
                     aria-label="Delete session"
                     title="Delete session"
                   >

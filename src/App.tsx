@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AmbientBackground } from "./components/AmbientBackground";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPane } from "./components/ChatPane";
@@ -166,7 +167,9 @@ export default function App() {
   );
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "var(--gd-bg)" }}>
+    <div className="h-full flex flex-col relative" style={{ background: "var(--gd-bg)" }}>
+      <AmbientBackground />
+      <div className="relative z-10 h-full flex flex-col min-h-0">
       <TitleBar title={activeSession ? activeSession.title : "Grok Desktop"} />
       {lastError && (
         <div
@@ -347,6 +350,7 @@ export default function App() {
         <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
       )}
       <MemoryToast />
+      </div>
     </div>
   );
 }
