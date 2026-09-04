@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import { defaultCwd, pickFolder, currentModelInfo, type ModelInfo } from "../lib/api";
 
 export function NewSessionDialog({
@@ -25,14 +26,23 @@ export function NewSessionDialog({
   }
 
   return (
-    <div
+    <motion.div
+      key="new-session-backdrop"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
       className="absolute inset-0 z-50 flex items-center justify-center"
       style={{ background: "rgba(0,0,0,0.45)" }}
       onClick={onClose}
     >
-      <div
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 4 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
-        className="gd-pop w-96 rounded-[var(--gd-radius-lg)] border p-5"
+        className="w-96 rounded-[var(--gd-radius-lg)] border p-5"
         style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
       >
         <div className="text-[15px] font-semibold mb-4" style={{ color: "var(--gd-text)" }}>
@@ -116,7 +126,7 @@ export function NewSessionDialog({
             Start
           </button>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

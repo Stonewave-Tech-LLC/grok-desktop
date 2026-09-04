@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { AmbientBackground } from "./components/AmbientBackground";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
@@ -321,7 +322,9 @@ export default function App() {
                       onCancel={handleCancel}
                     />
                   </div>
-                  {activityDockOpen && <InsightsDock sessionId={activeSessionId} />}
+                  <AnimatePresence>
+                    {activityDockOpen && <InsightsDock sessionId={activeSessionId} />}
+                  </AnimatePresence>
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center">
@@ -346,9 +349,11 @@ export default function App() {
           </>
         )}
       </div>
-      {newSessionDialogOpen && (
-        <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
-      )}
+      <AnimatePresence>
+        {newSessionDialogOpen && (
+          <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
+        )}
+      </AnimatePresence>
       <MemoryToast />
       </div>
     </div>

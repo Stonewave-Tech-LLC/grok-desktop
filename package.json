@@ -23,6 +23,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@uiw/react-codemirror": "^4.25.11",
     "codemirror": "^6.0.2",
+    "framer-motion": "^11.18.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

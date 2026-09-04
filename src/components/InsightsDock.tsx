@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { useSessionStore } from "../store/sessions";
 import { ActivityPanel } from "./ActivityDock";
 import { WorkflowPanel } from "./WorkflowPanel";
@@ -71,7 +72,12 @@ export function InsightsDock({ sessionId }: { sessionId?: string }) {
     // `fixed`) is correct here regardless of the corner-clipping rule: this
     // panel is scoped to that content area, not the viewport, so it doesn't
     // need to escape any ancestor to begin with.
-    <div
+    <motion.div
+      key="insights-dock"
+      initial={{ x: width, opacity: 0 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: width, opacity: 0 }}
+      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
       className="absolute top-0 right-0 bottom-0 flex flex-col min-h-0"
       style={{
         width,
@@ -117,6 +123,6 @@ export function InsightsDock({ sessionId }: { sessionId?: string }) {
       {dockTab === "workflows" && <WorkflowPanel session={session} />}
       {dockTab === "assets" && <AssetsPanel cwd={session?.cwd} />}
       {dockTab === "memory" && <MemoryPanel cwd={session?.cwd} />}
-    </div>
+    </motion.div>
   );
 }

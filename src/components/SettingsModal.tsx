@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion } from "framer-motion";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { setMemoryEnabled as setMemoryEnabledBackend } from "../lib/api";
 import { useSessionStore } from "../store/sessions";
@@ -203,14 +204,23 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
   }
 
   return (
-    <div
+    <motion.div
+      key="settings-modal-backdrop"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
       className="absolute inset-0 z-50 flex items-center justify-center"
       style={{ background: "rgba(0,0,0,0.6)" }}
       onClick={onClose}
     >
-      <div
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 4 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
-        className="gd-pop w-[520px] h-[380px] rounded-[var(--gd-radius-lg)] border flex overflow-hidden"
+        className="w-[520px] h-[380px] rounded-[var(--gd-radius-lg)] border flex overflow-hidden"
         style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
       >
         <div
@@ -281,7 +291,7 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
           {section === "memory" && <MemorySection onBrowse={handleBrowseMemory} />}
           {section === "about" && <AboutSection />}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

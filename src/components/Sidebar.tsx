@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AnimatePresence } from "framer-motion";
 import { useSessionStore } from "../store/sessions";
 import { SettingsModal } from "./SettingsModal";
 
@@ -155,7 +156,9 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
           />
         </button>
       </div>
-      {settingsOpen && <SettingsModal ready={ready} onClose={() => setSettingsOpen(false)} />}
+      <AnimatePresence>
+        {settingsOpen && <SettingsModal ready={ready} onClose={() => setSettingsOpen(false)} />}
+      </AnimatePresence>
     </div>
   );
 }
