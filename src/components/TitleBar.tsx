@@ -139,9 +139,12 @@ export function TitleBar({ title, extra }: { title: string; extra?: React.ReactN
   ) : (
     <MacWindowControls />
   );
-  const trailing = isWindows ? <WindowsWindowControls /> : (
-    <div data-tauri-drag-region onMouseDown={handleDragMouseDown} className="w-[68px] h-full" />
-  );
+  // Mac used to trail with the same 68px empty drag spacer as `leading`, just
+  // to balance the traffic lights visually — that's what parked the pills
+  // ~68px in from the real window edge instead of letting them sit flush
+  // against it. Windows keeps its caption buttons as the true trailing edge,
+  // unaffected (they were never a spacer to begin with).
+  const trailing = isWindows ? <WindowsWindowControls /> : null;
 
   return (
     <div
@@ -167,10 +170,15 @@ export function TitleBar({ title, extra }: { title: string; extra?: React.ReactN
         {title}
       </div>
       {/* Dock tabs (slice 4) — not a drag region, sits between the title and
-          the trailing spacer so clicks reach the buttons instead of starting
-          a window drag. */}
+          the trailing edge so clicks reach the buttons instead of starting a
+          window drag. On Mac (no trailing spacer/caption buttons anymore)
+          this cluster *is* the trailing edge — `pr-3` matches the traffic
+          lights' `pl-3` so both clusters sit flush against their side. */}
       {extra && (
-        <div className="h-full flex items-center gap-1 pr-2" onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          className={"h-full flex items-center gap-1 " + (isWindows ? "pr-2" : "pr-3")}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           {extra}
         </div>
       )}

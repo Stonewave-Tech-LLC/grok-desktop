@@ -232,3 +232,56 @@ pub fn save_image_as(source_path: String, dest_path: String) -> Result<(), Strin
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
+
+/// Lists sessions grok itself has persisted under `~/.grok/sessions/`,
+/// independent of which ones *this* app instance created — this is what lets
+/// the sidebar surface sessions started from the `grok` TUI. Follows ACP
+/// `session/list`'s cursor pagination (`cursor` in, `sessions[]` +
+/// `nextCursor` out), same contract Forge (the sibling macOS ACP client)
+/// already relies on. Hard-capped at 1000 entries as a backstop against an
+/// unbounded on-disk history, not a normal case.
+///
+/// NOTE: this command's wire shape is inferred from ACP's own pagination
+/// convention and Forge's already-working contract, not confirmed against a
+/// live capture the way the rest of docs/protocol-notes/README.md was — this
+/// box has no `grok` CLI or Rust toolchain to test against. The frontend
+/// (`listSessions` in `lib/api.ts`) does defensive field lookup on the
+/// returned objects for the same reason.
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, GrokState>) -> Result<Value, String> {
+    const MAX_SESSIONS: usize = 1000;
+    let mut sessions: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        let mut params = json!({});
+        if let Some(c) = &cursor {
+            params["cursor"] = json!(c);
+        }
+        let result = state
+            .process
+            .request("session/list", params)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let page = result
+            .get("sessions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let page_was_empty = page.is_empty();
+        sessions.extend(page);
+
+        cursor = result
+            .get("nextCursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if cursor.is_none() || page_was_empty || sessions.len() >= MAX_SESSIONS {
+            break;
+        }
+    }
+
+    sessions.truncate(MAX_SESSIONS);
+    Ok(json!(sessions))
+}

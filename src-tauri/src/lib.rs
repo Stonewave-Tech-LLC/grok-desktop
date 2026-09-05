@@ -78,6 +78,7 @@ pub fn run() {
             commands::current_model_info,
             commands::new_session,
             commands::load_session,
+            commands::list_sessions,
             commands::send_prompt,
             commands::cancel_prompt,
             commands::respond_permission,

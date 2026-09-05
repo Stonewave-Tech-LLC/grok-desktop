@@ -233,6 +233,11 @@ body {
   border: 1px solid transparent;
   background: transparent;
   white-space: nowrap;
+  /* WKWebView paints its own blue default focus ring on plain buttons — sat
+     right on top of the billet in a slice-4 screenshot. Swap it for the same
+     white glow every other focusable control here uses, never leave `outline`
+     on its browser default. */
+  outline: none;
   transition: background var(--gd-dur-fast) ease, color var(--gd-dur-fast) ease, border-color var(--gd-dur-fast) ease,
     box-shadow var(--gd-dur-fast) ease;
 }
@@ -240,11 +245,18 @@ body {
   color: var(--gd-text-muted);
   background: var(--gd-accent-soft);
 }
+.gd-panel-tab:focus-visible {
+  box-shadow: 0 0 0 2px var(--gd-border-glow);
+}
 .gd-panel-tab.active {
   color: var(--gd-accent-contrast);
   background: var(--gd-billet);
   border-color: rgba(255, 255, 255, 0.5);
   box-shadow: 0 0 20px rgba(255, 255, 255, 0.15);
+}
+.gd-panel-tab:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 /* Breathing ring for controls that represent live, cancelable work (the
@@ -380,5 +392,51 @@ body {
   .gd-ambient-orb-1,
   .gd-ambient-orb-2 {
     animation: none;
+  }
+}
+
+/* Slice 5: global boot splash. Wordmark gradient matches the site's
+   `.hero h1 .glow-word` formula (white -> zinc, clipped to text) plus a soft
+   white text-shadow for the "glow" pop the site doesn't need (its hero sits
+   in a full page of bright text; this sits alone on obsidian) — explicitly
+   monochrome, never the Forge cyan accent. */
+.gd-splash-wordmark {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(180deg, #fff 0%, #e4e4e7 50%, #a1a1aa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 32px rgba(255, 255, 255, 0.28);
+}
+
+/* 1:1 port of the site's `.nav-heat` scanning line, renamed into the app's
+   own token namespace — same white scan, no cyan, used in place of a
+   spinning macOS progress wheel. */
+.gd-heat-scan {
+  position: relative;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 15%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.05) 85%,
+    transparent 100%
+  );
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.35);
+  opacity: 0.7;
+  animation: gd-heat-scan 5.5s ease-in-out infinite;
+}
+
+@keyframes gd-heat-scan {
+  0%,
+  100% {
+    transform: scaleX(0.55);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.9;
   }
 }

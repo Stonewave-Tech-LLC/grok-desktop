@@ -6,12 +6,17 @@ import { WorkflowPanel } from "./WorkflowPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { AssetsPanel } from "./AssetsPanel";
 
-const TABS: Array<{ id: "activity" | "workflows" | "memory" | "assets"; label: string }> = [
-  { id: "activity", label: "Activity" },
-  { id: "workflows", label: "Workflows" },
-  { id: "assets", label: "Assets" },
-  { id: "memory", label: "Memory" },
-];
+// Slice 5: the titlebar pills (App.tsx) are now the only tab switcher — this
+// dock used to render its own second ACTIVITY/WORKFLOWS/ASSETS/MEMORY strip
+// underneath them, which read as two window-switchers stacked on top of each
+// other the moment the panel opened. Just a title (matching whichever pill is
+// active) + close button now; switching still happens up in the titlebar.
+const PANEL_TITLES: Record<"activity" | "workflows" | "memory" | "assets", string> = {
+  activity: "Activity",
+  workflows: "Workflows",
+  assets: "Assets",
+  memory: "Memory",
+};
 
 const WIDTH_KEY = "gd-dock-width";
 const MIN_WIDTH = 280;
@@ -25,7 +30,6 @@ function readStoredWidth(): number {
 
 export function InsightsDock({ sessionId }: { sessionId?: string }) {
   const dockTab = useSessionStore((s) => s.dockTab);
-  const openDockTab = useSessionStore((s) => s.openDockTab);
   const toggleActivityDock = useSessionStore((s) => s.toggleActivityDock);
   const session = useSessionStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
 
@@ -93,20 +97,10 @@ export function InsightsDock({ sessionId }: { sessionId?: string }) {
         className="absolute top-0 bottom-0 left-0 w-1.5 -translate-x-1/2 cursor-col-resize"
         style={{ background: resizing ? "var(--gd-accent)" : "transparent" }}
       />
-      <div className="flex items-center border-b shrink-0" style={{ borderColor: "var(--gd-border)" }}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => openDockTab(tab.id)}
-            className="flex-1 px-2 py-2 text-[10.5px] font-semibold uppercase tracking-wide transition"
-            style={{
-              color: dockTab === tab.id ? "var(--gd-text)" : "var(--gd-text-faint)",
-              borderBottom: dockTab === tab.id ? "2px solid var(--gd-accent)" : "2px solid transparent",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="flex items-center justify-between shrink-0 h-9 pl-3">
+        <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "var(--gd-text-muted)" }}>
+          {dockTab ? PANEL_TITLES[dockTab] : ""}
+        </span>
         <button
           onClick={() => toggleActivityDock(false)}
           aria-label="Close panel"

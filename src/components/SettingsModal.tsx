@@ -140,7 +140,7 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
         they're recalled automatically in future sessions. Also seeds a small policy file
         at <code>~/.grok/rules/</code> so grok actually searches memory proactively instead
         of just having the tools without using them. Changes take effect after restarting
-        Grok Desktop.
+        Anvil.
       </div>
       {memoryActiveThisRun && (
         <button
@@ -170,7 +170,7 @@ function AboutSection() {
         />
         <div>
           <div className="text-[14px] font-semibold" style={{ color: "var(--gd-text)" }}>
-            Grok Desktop
+            Anvil
           </div>
           <div className="text-[11px]" style={{ color: "var(--gd-text-faint)" }}>
             v0.1.0

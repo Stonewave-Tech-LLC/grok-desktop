@@ -24,6 +24,45 @@ export async function loadSession(sessionId: string, cwd: string): Promise<void>
   await invoke("load_session", { sessionId, cwd });
 }
 
+export interface RemoteSessionStub {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: number;
+}
+
+function asObj(v: JsonValue): Record<string, JsonValue> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, JsonValue>) : {};
+}
+
+/// Sessions grok has persisted independent of this app instance (e.g.
+/// started from the `grok` TUI) — via ACP `session/list` on the Rust side.
+/// Field lookup here is defensive (falls back across a few plausible key
+/// spellings) since the exact wire shape isn't confirmed from a live capture
+/// the way the rest of this file's commands are — see the comment on
+/// `list_sessions` in commands.rs. Entries missing a usable id/cwd are
+/// dropped rather than surfaced as broken stubs.
+export async function listSessions(): Promise<RemoteSessionStub[]> {
+  const raw = (await invoke("list_sessions")) as JsonValue;
+  const entries = Array.isArray(raw) ? raw : [];
+  const stubs: RemoteSessionStub[] = [];
+  for (const entry of entries) {
+    const rec = asObj(entry);
+    const sessionId = rec.sessionId ?? rec.session_id ?? rec.id;
+    const cwd = rec.cwd ?? rec.workingDirectory ?? rec.working_directory;
+    if (typeof sessionId !== "string" || typeof cwd !== "string") continue;
+    const title = rec.title ?? rec.name;
+    const updatedAt = rec.updatedAt ?? rec.updated_at ?? rec.lastUpdated ?? rec.modifiedAt;
+    stubs.push({
+      sessionId,
+      cwd,
+      title: typeof title === "string" ? title : undefined,
+      updatedAt: typeof updatedAt === "number" ? updatedAt : undefined,
+    });
+  }
+  return stubs;
+}
+
 export async function sendPrompt(sessionId: string, text: string): Promise<JsonValue> {
   return invoke("send_prompt", { sessionId, text });
 }

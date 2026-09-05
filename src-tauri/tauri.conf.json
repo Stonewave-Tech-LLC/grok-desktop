@@ -13,7 +13,7 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Grok Desktop",
+        "title": "Anvil",
         "width": 1200,
         "height": 800,
         "minWidth": 860,

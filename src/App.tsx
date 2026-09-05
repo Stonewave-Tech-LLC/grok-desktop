@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { AmbientBackground } from "./components/AmbientBackground";
+import { AnvilSplash, type BootStatus } from "./components/AnvilSplash";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPane } from "./components/ChatPane";
@@ -12,6 +13,7 @@ import { useSessionStore } from "./store/sessions";
 import {
   newSession,
   loadSession,
+  listSessions,
   sendPrompt,
   cancelPrompt,
   checkAuth,
@@ -25,12 +27,13 @@ import { MemoryToast } from "./components/MemoryToast";
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
   const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
-
-  useEffect(() => {
-    checkAuth()
-      .then((ok) => setAuthState(ok ? "authenticated" : "unauthenticated"))
-      .catch(() => setAuthState("unauthenticated"));
-  }, []);
+  // Drives the AnvilSplash overlay. Deliberately separate from the store's
+  // `ready` flag: `ready` only ever meant "the ACP connection answered
+  // init_status", which several other bits of UI (Composer, Sidebar's status
+  // dot) already key off of and shouldn't have to wait on session import too.
+  const [bootStatus, setBootStatus] = useState<BootStatus>("initializing");
+  const [bootError, setBootError] = useState<string | undefined>(undefined);
+  const [bootAttempt, setBootAttempt] = useState(0);
 
   useEffect(() => {
     getMemoryEnabled().then(setMemoryEnabled).catch(() => {});
@@ -44,7 +47,6 @@ export default function App() {
     setInitError,
     handleAcpEvent,
     sessions,
-    sessionOrder,
     activeSessionId,
     registerSession,
     appendUserMessage,
@@ -61,6 +63,9 @@ export default function App() {
     memoryActiveThisRun,
     setMemoryEnabled,
     setMemoryActiveThisRun,
+    reattachedSessionIds,
+    markReattached,
+    mergeRemoteSessions,
   } = useSessionStore();
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
@@ -78,61 +83,116 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityCount]);
 
+  // The onAcpEvent listener has to be live before anything else below can
+  // possibly matter (a stream event could arrive the instant init_status
+  // resolves), so it's registered unconditionally on mount, independent of
+  // the boot sequence's own retries.
   useEffect(() => {
     const unlisten = onAcpEvent((e) => handleAcpEvent(e));
-    // A command (request/response), not a "ready" event — correct regardless of
-    // how fast this effect happens to run relative to the Rust side finishing
-    // its (near-instant) initialize handshake. See src-tauri's state.rs/lib.rs.
-    initStatus()
-      .then(() => setReady(true))
-      .catch((err) => setInitError(String(err)));
     return () => {
       unlisten.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sessions from a previous app run are restored into the store by the
-  // persist middleware already (their timeline/messages included) — but the
-  // *backend* needs a fresh reattach per session before it'll accept new
-  // prompts for it, since grok's process restarted along with ours.
-  //
-  // A reattach failure here used to delete the session outright — but that
-  // silently destroyed real conversation history on what can easily be a
-  // transient failure (a timing race right after the session was created, a
-  // momentary backend hiccup), not proof the session is actually gone. Keep
-  // the session and its history visible either way; only surface the error,
-  // so sending a *new* message is what tells the user something's actually
-  // wrong (via the existing setLastError path in handleSend) — deleting a
-  // dead session is still one click away if it truly never reconnects.
+  // Slice 5's boot sequence: everything the splash holds for lives here in
+  // one place instead of several independent effects racing each other —
+  // init_status + check_auth (parallel, neither should block the other),
+  // then list_sessions's merge, then reattaching *only* the session that was
+  // last active (not the whole persisted history — see the on-select effect
+  // below for the rest). `bootAttempt` is the retry hook for the splash's
+  // failure state.
   useEffect(() => {
-    if (!ready) return;
+    let cancelled = false;
+    setBootStatus("initializing");
+    setBootError(undefined);
+
+    (async () => {
+      // A command (request/response), not a "ready" event — correct
+      // regardless of how fast this effect happens to run relative to the
+      // Rust side finishing its (near-instant) initialize handshake. See
+      // src-tauri's state.rs/lib.rs. This is the one call whose failure is
+      // actually fatal to the app being usable at all — checkAuth failing
+      // just means "assume unauthenticated, the onboarding screen after the
+      // splash handles it", so it's swallowed rather than propagated.
+      const [authOk] = await Promise.all([checkAuth().catch(() => false), initStatus()]);
+      if (cancelled) return;
+      setAuthState(authOk ? "authenticated" : "unauthenticated");
+      setReady(true);
+
+      setBootStatus("importing");
+      // grok's own on-disk session history can be large; a failure here
+      // (unsupported CLI version, transient RPC error) shouldn't block the
+      // app on local-only sessions still being fully usable.
+      const remote = await listSessions().catch(() => []);
+      if (cancelled) return;
+      mergeRemoteSessions(remote);
+
+      setBootStatus("reattaching");
+      const active = useSessionStore.getState().activeSessionId;
+      const sessionToReattach = active ? useSessionStore.getState().sessions[active] : undefined;
+      if (active && sessionToReattach && !useSessionStore.getState().reattachedSessionIds.has(active)) {
+        try {
+          await loadSession(active, sessionToReattach.cwd);
+          markReattached(active);
+        } catch (err) {
+          setLastError(`Couldn't reconnect "${sessionToReattach.title}": ${String(err)}`);
+        }
+      }
+      if (cancelled) return;
+      setBootStatus("ready");
+    })().catch((err) => {
+      if (cancelled) return;
+      setInitError(String(err));
+      setBootStatus("error");
+      setBootError(String(err));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // Only the retry button (bootAttempt) should ever re-run this — it's a
+    // one-shot sequence otherwise, not something that reacts to store state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootAttempt]);
+
+  // Any *other* persisted session becomes reattached lazily, on first select
+  // — not during the splash (a CLI-imported history can be hundreds of
+  // sessions; loading every stub's transcript up front is the exact "118MB
+  // JSONL" cost Forge already avoided, see SLICE5.md). `reattachedSessionIds`
+  // is what makes this idempotent per session per run — new sessions are
+  // marked reattached at creation time (handleCreateSession) since
+  // `session/new` already established their backend context.
+  useEffect(() => {
+    if (bootStatus !== "ready" || !activeSessionId) return;
+    if (reattachedSessionIds.has(activeSessionId)) return;
+    const session = sessions[activeSessionId];
+    if (!session) return;
     let cancelled = false;
     (async () => {
-      for (const id of sessionOrder) {
-        const session = sessions[id];
-        if (!session) continue;
-        try {
-          await loadSession(id, session.cwd);
-        } catch (err) {
-          if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
-        }
+      try {
+        await loadSession(activeSessionId, session.cwd);
+        if (!cancelled) markReattached(activeSessionId);
+      } catch (err) {
+        if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
       }
     })();
     return () => {
       cancelled = true;
     };
-    // Only re-run when the connection just became ready, not on every
-    // session list change — reattaching already-loaded sessions again would
-    // be redundant work, not incorrect, but there's no reason to.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
+  }, [activeSessionId, bootStatus]);
 
   async function handleCreateSession(cwd: string, yolo: boolean) {
     setNewSessionDialogOpen(false);
     try {
       const { sessionId } = await newSession(cwd, yolo);
       registerSession(sessionId, cwd, yolo);
+      // `session/new` already established this session's backend context —
+      // the lazy on-select reattach effect would otherwise redundantly
+      // `session/load` it the moment it becomes active (which it does,
+      // immediately, via registerSession).
+      markReattached(sessionId);
     } catch (err) {
       setLastError(`Couldn't start a session: ${String(err)}`);
     }
@@ -172,25 +232,21 @@ export default function App() {
       <AmbientBackground />
       <div className="relative z-10 h-full flex flex-col min-h-0">
       <TitleBar
-        title={activeSession ? activeSession.title : "Grok Desktop"}
+        title={activeSession ? activeSession.title : "Anvil"}
         extra={
           activeSession && (
             <>
               <button
                 onClick={toggleDiffsAutoExpand}
-                aria-label="Show all diffs"
                 title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
-                className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                style={{
-                  color: diffsAutoExpand ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                  background: diffsAutoExpand ? "var(--gd-accent-soft)" : "transparent",
-                }}
+                className={"gd-panel-tab" + (diffsAutoExpand ? " active" : "")}
               >
-                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
                   <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
                   <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
                   <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
                 </svg>
+                Diffs
               </button>
               <button
                 onClick={() => openDockTab("activity")}
@@ -221,14 +277,17 @@ export default function App() {
               >
                 Assets
               </button>
-              {memoryActiveThisRun && (
-                <button
-                  onClick={() => openDockTab("memory")}
-                  className={"gd-panel-tab" + (activityDockOpen && dockTab === "memory" ? " active" : "")}
-                >
-                  Memory
-                </button>
-              )}
+              {/* Always rendered now (was gated on memoryActiveThisRun) so the
+                  right edge doesn't jump depending on whether memory happens
+                  to be on this run — just dim/disabled when it's off. */}
+              <button
+                onClick={() => openDockTab("memory")}
+                disabled={!memoryActiveThisRun}
+                title={memoryActiveThisRun ? undefined : "Memory is off for this session"}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "memory" ? " active" : "")}
+              >
+                Memory
+              </button>
             </>
           )
         }
@@ -280,7 +339,7 @@ export default function App() {
                 <div className="flex-1 flex items-center justify-center">
                   <div className="text-center max-w-sm">
                     <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
-                      Grok Desktop
+                      Anvil
                     </div>
                     <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
                       {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
@@ -305,6 +364,11 @@ export default function App() {
         )}
       </AnimatePresence>
       <MemoryToast />
+      <AnvilSplash
+        status={bootStatus}
+        errorMessage={bootError}
+        onRetry={() => setBootAttempt((n) => n + 1)}
+      />
       </div>
     </div>
   );

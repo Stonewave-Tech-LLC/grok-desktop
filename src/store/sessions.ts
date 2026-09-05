@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
+import type { RemoteSessionStub } from "../lib/api";
 
 // zustand's persist middleware writes on *every* set() call by default — fine
 // for occasional UI-toggle changes, but handleSessionUpdate calls set() once
@@ -191,6 +192,14 @@ interface SessionStoreState {
   // session's leftover/replayed chunks from resurrecting a "streaming" status
   // for a turn nobody in this run is actually waiting on. See handleSessionUpdate.
   activeTurnSessionIds: Set<string>;
+  // Sessions whose backend context has been (re)established this process —
+  // via `session/new` at creation time or `session/load` on reattach/select.
+  // Drives the slice-5 lazy-import behavior: a CLI-imported stub's timeline
+  // is empty until its first `session/load`, and this set is what stops that
+  // load from firing more than once per session per run. Deliberately NOT
+  // persisted (see partialize below) — it describes *this process's* live
+  // ACP connection, meaningless across a restart.
+  reattachedSessionIds: Set<string>;
 
   setReady: (ready: boolean) => void;
   setInitError: (msg: string) => void;
@@ -210,6 +219,14 @@ interface SessionStoreState {
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   finalizeTurn: (sessionId: string) => void;
+  markReattached: (sessionId: string) => void;
+  // Adds grok CLI sessions (from `list_sessions`) as empty-timeline stubs for
+  // any sessionId not already known locally — never overwrites an existing
+  // entry (this app's own persisted history always wins). Appended after the
+  // existing sessionOrder rather than interleaved by recency: this app's own
+  // sessions are already ordered by creation (LIFO, see registerSession), and
+  // grok's `updatedAt` isn't a comparable creation timestamp to sort against.
+  mergeRemoteSessions: (remote: RemoteSessionStub[]) => void;
 }
 
 function uid(): string {
@@ -263,6 +280,7 @@ export const useSessionStore = create<SessionStoreState>()(
   diffsAutoExpand: false,
   debugLog: [],
   activeTurnSessionIds: new Set(),
+  reattachedSessionIds: new Set(),
   memoryEnabled: false,
   memoryActiveThisRun: false,
 
@@ -384,6 +402,38 @@ export const useSessionStore = create<SessionStoreState>()(
       const sessionOrder = s.sessionOrder.filter((sid) => sid !== id);
       const activeSessionId = s.activeSessionId === id ? sessionOrder[0] : s.activeSessionId;
       return { sessions: rest, sessionOrder, activeSessionId };
+    }),
+
+  markReattached: (sessionId) =>
+    set((s) => ({ reattachedSessionIds: new Set(s.reattachedSessionIds).add(sessionId) })),
+
+  mergeRemoteSessions: (remote) =>
+    set((s) => {
+      const sessions = { ...s.sessions };
+      const additions: string[] = [];
+      for (const r of remote) {
+        if (sessions[r.sessionId]) continue;
+        sessions[r.sessionId] = {
+          id: r.sessionId,
+          cwd: r.cwd,
+          title: r.title || r.cwd.split("/").filter(Boolean).pop() || "Session",
+          createdAt: r.updatedAt ?? Date.now(),
+          timeline: [],
+          streamingText: "",
+          status: "idle",
+          activity: {},
+          activityOrder: [],
+          yolo: false,
+          tokensCumulative: 0,
+          costCumulativeUsdTicks: 0,
+          costEstimated: false,
+          workflows: {},
+          workflowOrder: [],
+        };
+        additions.push(r.sessionId);
+      }
+      if (additions.length === 0) return {};
+      return { sessions, sessionOrder: [...s.sessionOrder, ...additions] };
     }),
 
   // `session/prompt` resolving is the actual ACP signal that a turn ended — nothing

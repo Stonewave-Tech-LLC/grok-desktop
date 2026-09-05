@@ -44,11 +44,11 @@ export function Onboarding({ onAuthenticated }: { onAuthenticated: () => void })
     <div className="flex-1 flex items-center justify-center" style={{ background: "var(--gd-bg)" }}>
       <div className="text-center max-w-sm px-6">
         <div className="text-[18px] font-semibold mb-1" style={{ color: "var(--gd-text)" }}>
-          Welcome to Grok Desktop
+          Welcome to Anvil
         </div>
         <div className="text-[13px] mb-6" style={{ color: "var(--gd-text-muted)" }}>
           Sign in to the <code>grok</code> CLI to get started. This opens grok.com in your
-          browser — Grok Desktop never sees your credentials.
+          browser — Anvil never sees your credentials.
         </div>
 
         {status === "waiting" && loginUrl ? (
