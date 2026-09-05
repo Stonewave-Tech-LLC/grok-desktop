@@ -70,7 +70,7 @@ pub async fn new_session(
 ) -> Result<Value, String> {
     let mut params = json!({
         "cwd": cwd,
-        "mcpServers": mcp::probe_servers()?,
+        "mcpServers": mcp::probe_servers(&cwd)?,
     });
     if yolo {
         params["_meta"] = json!({ "yoloMode": true });
@@ -99,7 +99,7 @@ pub async fn load_session(
     let params = json!({
         "sessionId": session_id,
         "cwd": cwd,
-        "mcpServers": mcp::probe_servers()?,
+        "mcpServers": mcp::probe_servers(&cwd)?,
     });
     state
         .process

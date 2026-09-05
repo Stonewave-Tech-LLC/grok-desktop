@@ -54,6 +54,9 @@ pub fn run() {
             if memory_active {
                 let _ = memory::write_agent_rules();
             }
+            // Unlike memory's rules file, graphify's isn't behind a toggle —
+            // see mcp.rs's module docs for why this one is unconditional.
+            let _ = mcp::write_agent_rules();
 
             let (process, init_result) = tauri::async_runtime::block_on(async {
                 let process = AcpProcess::spawn(&binary, &["agent", "stdio"], envs, on_event)?;
