@@ -61,6 +61,20 @@ function extractLastAssistantText(session: ChatSession): string | undefined {
   return undefined;
 }
 
+/// Dream replies put the candidate in a fenced JSON block. The last
+/// `agent_message_final` is usually that reply, but a later empty/partial
+/// flush or a capture turn finishing out of order can sit on top — walk
+/// back until we actually see a ```json fence, otherwise fall through.
+function extractDreamReplyText(session: ChatSession): string | undefined {
+  for (let i = session.timeline.length - 1; i >= 0; i--) {
+    const item = session.timeline[i];
+    if (item.sessionUpdate !== "agent_message_final") continue;
+    const text = typeof item.raw.text === "string" ? item.raw.text : "";
+    if (/```json/i.test(text)) return text;
+  }
+  return extractLastAssistantText(session);
+}
+
 function EntryRow({
   entry,
   active,
@@ -399,6 +413,7 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
   const memoryActiveThisRun = useSessionStore((s) => s.memoryActiveThisRun);
   const appendUserMessage = useSessionStore((s) => s.appendUserMessage);
   const finalizeTurn = useSessionStore((s) => s.finalizeTurn);
+  const setLastError = useSessionStore((s) => s.setLastError);
   const [entries, setEntries] = useState<MemoryEntryMeta[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
   const [selectedEntry, setSelectedEntry] = useState<MemoryEntry | undefined>(undefined);
@@ -492,8 +507,13 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
     if (!sessionId || !cwd || dreaming) return;
     setDreaming(true);
     try {
+      // Read from disk at click time — React `entries` can still be [] if
+      // this fires before refresh() settles (live: Dream ran on an empty
+      // prompt while two episodics were already on disk).
+      const list = await listAnvilEntries(cwd).catch(() => []);
+      setEntries(list);
       const stateCard = await readStateCard(cwd);
-      const episodicMetas = entries.filter((e) => e.type === "episodic");
+      const episodicMetas = list.filter((e) => e.type === "episodic");
       const episodicFull = await Promise.all(episodicMetas.map((e) => readAnvilEntry(e.path)));
       const prompt = buildDreamPrompt(
         stateCard,
@@ -506,12 +526,16 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
         finalizeTurn(sessionId);
       }
       const session = useSessionStore.getState().sessions[sessionId];
-      const reply = session ? extractLastAssistantText(session) : undefined;
+      const reply = session ? extractDreamReplyText(session) : undefined;
       const parsed = reply ? parseDreamReply(reply) : undefined;
       if (parsed) {
         await saveDreamCandidate(cwd, parsed);
         await refreshCandidate();
+      } else {
+        setLastError("Dream finished but no candidate JSON came back — live store untouched.");
       }
+    } catch (err) {
+      setLastError(`Dream failed: ${String(err)}`);
     } finally {
       setDreaming(false);
     }
