@@ -7,6 +7,7 @@ import { PlanApprovalCard } from "./PlanApprovalCard";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { useSessionStore } from "../store/sessions";
 import { EmptyCanvas } from "./EmptyCanvas";
+import { ImagineOverlay } from "./ImagineOverlay";
 
 function ThinkingDots() {
   return (
@@ -171,6 +172,8 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
       </div>
       </div>
       )}
+
+      <ImagineOverlay session={session} />
 
       {!atBottom && (
         <button

@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
-import type { RemoteSessionStub } from "../lib/api";
+import type { ModelInfo, RemoteSessionStub } from "../lib/api";
+import {
+  FALLBACK_MODES,
+  modeImpliesYolo,
+  type SessionControls,
+  type SessionMode,
+} from "../lib/sessionControls";
 
 // zustand's persist middleware writes on *every* set() call by default — fine
 // for occasional UI-toggle changes, but handleSessionUpdate calls set() once
@@ -120,6 +126,8 @@ export interface WorkflowRun {
   updatedAt: number;
 }
 
+export type ImagineAspect = "auto" | "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+
 export interface ChatSession {
   id: string;
   cwd: string;
@@ -131,6 +139,10 @@ export interface ChatSession {
   activity: Record<string, ActivityItem>;
   activityOrder: string[];
   yolo: boolean;
+  modelId?: string;
+  modeId?: string;
+  availableModels?: ModelInfo["availableModels"];
+  availableModes?: SessionMode[];
   // Latest turn's total (input+output, includes cache reads) — a proxy for
   // "how full is the context window right now", not cumulative spend. Reset
   // by nothing; each turn just overwrites it.
@@ -186,6 +198,15 @@ interface SessionStoreState {
   // store. Composer consumes it via useEffect and clears it right after, so
   // it never persists or refires. Deliberately not persisted (see partialize).
   composerDraft?: string;
+  // Process-level model catalog from initialize `_meta.modelState`. A
+  // session's live selection is `ChatSession.modelId`; this is the fallback
+  // list so the picker still has names before session/new returns modes.
+  modelCatalog?: ModelInfo;
+  defaultYolo: boolean;
+  defaultModelId?: string;
+  imagineAutoOpen: boolean;
+  imagineDefaultAspect: ImagineAspect;
+  lastWorkspace?: string;
   // Sessions with a turn WE started this process (via appendUserMessage) and
   // haven't yet seen finalized (finalizeTurn / turn_completed). Deliberately
   // NOT persisted (see partialize below) — it exists only to stop a reattached
@@ -204,7 +225,16 @@ interface SessionStoreState {
   setReady: (ready: boolean) => void;
   setInitError: (msg: string) => void;
   setLastError: (msg?: string) => void;
-  registerSession: (id: string, cwd: string, yolo: boolean) => void;
+  registerSession: (id: string, cwd: string, yolo: boolean, modelId?: string) => void;
+  applySessionControls: (id: string, controls: SessionControls) => void;
+  setSessionModelLocal: (id: string, modelId: string) => void;
+  setSessionModeLocal: (id: string, modeId: string) => void;
+  setModelCatalog: (info: ModelInfo) => void;
+  setDefaultYolo: (v: boolean) => void;
+  setDefaultModelId: (id?: string) => void;
+  setImagineAutoOpen: (v: boolean) => void;
+  setImagineDefaultAspect: (v: ImagineAspect) => void;
+  setLastWorkspace: (cwd: string) => void;
   setActiveSession: (id: string) => void;
   appendUserMessage: (sessionId: string, text: string) => void;
   handleAcpEvent: (event: AcpEvent) => void;
@@ -283,6 +313,9 @@ export const useSessionStore = create<SessionStoreState>()(
   reattachedSessionIds: new Set(),
   memoryEnabled: false,
   memoryActiveThisRun: false,
+  defaultYolo: false,
+  imagineAutoOpen: true,
+  imagineDefaultAspect: "auto",
 
   setReady: (ready) => set({ ready }),
   setInitError: (msg) => set({ initError: msg }),
@@ -291,8 +324,14 @@ export const useSessionStore = create<SessionStoreState>()(
   setMemoryActiveThisRun: (v) => set({ memoryActiveThisRun: v }),
   setMemoryStatusMessage: (msg) => set({ memoryStatusMessage: msg }),
   setComposerDraft: (text) => set({ composerDraft: text }),
+  setModelCatalog: (info) => set({ modelCatalog: info }),
+  setDefaultYolo: (v) => set({ defaultYolo: v }),
+  setDefaultModelId: (id) => set({ defaultModelId: id }),
+  setImagineAutoOpen: (v) => set({ imagineAutoOpen: v }),
+  setImagineDefaultAspect: (v) => set({ imagineDefaultAspect: v }),
+  setLastWorkspace: (cwd) => set({ lastWorkspace: cwd }),
 
-  registerSession: (id, cwd, yolo) =>
+  registerSession: (id, cwd, yolo, modelId) =>
     set((s) => ({
       sessions: {
         ...s.sessions,
@@ -307,6 +346,10 @@ export const useSessionStore = create<SessionStoreState>()(
           activity: {},
           activityOrder: [],
           yolo,
+          modelId,
+          modeId: yolo ? "bypassPermissions" : "default",
+          availableModes: FALLBACK_MODES,
+          availableModels: s.modelCatalog?.availableModels,
           tokensCumulative: 0,
           costCumulativeUsdTicks: 0,
           costEstimated: false,
@@ -316,7 +359,47 @@ export const useSessionStore = create<SessionStoreState>()(
       },
       sessionOrder: [id, ...s.sessionOrder],
       activeSessionId: id,
+      lastWorkspace: cwd,
     })),
+
+  applySessionControls: (id, controls) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      const modeId = controls.modeId ?? session.modeId;
+      return {
+        sessions: {
+          ...s.sessions,
+          [id]: {
+            ...session,
+            modelId: controls.modelId ?? session.modelId,
+            modeId,
+            availableModels: controls.availableModels ?? session.availableModels,
+            availableModes: controls.availableModes ?? session.availableModes ?? FALLBACK_MODES,
+            yolo: modeId ? modeImpliesYolo(modeId) : session.yolo,
+          },
+        },
+      };
+    }),
+
+  setSessionModelLocal: (id, modelId) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      return { sessions: { ...s.sessions, [id]: { ...session, modelId } } };
+    }),
+
+  setSessionModeLocal: (id, modeId) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      return {
+        sessions: {
+          ...s.sessions,
+          [id]: { ...session, modeId, yolo: modeImpliesYolo(modeId) },
+        },
+      };
+    }),
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 
@@ -424,6 +507,8 @@ export const useSessionStore = create<SessionStoreState>()(
           activity: {},
           activityOrder: [],
           yolo: r.yolo,
+          modeId: r.yolo ? "bypassPermissions" : "default",
+          availableModes: FALLBACK_MODES,
           tokensCumulative: 0,
           costCumulativeUsdTicks: 0,
           costEstimated: false,
@@ -478,6 +563,12 @@ export const useSessionStore = create<SessionStoreState>()(
         ),
         sessionOrder: s.sessionOrder,
         activeSessionId: s.activeSessionId,
+        diffsAutoExpand: s.diffsAutoExpand,
+        defaultYolo: s.defaultYolo,
+        defaultModelId: s.defaultModelId,
+        imagineAutoOpen: s.imagineAutoOpen,
+        imagineDefaultAspect: s.imagineDefaultAspect,
+        lastWorkspace: s.lastWorkspace,
       }),
       // A restored session's status ("streaming"/"thinking") describes a turn
       // that died with the old process — without normalizing it here, the
@@ -495,6 +586,8 @@ export const useSessionStore = create<SessionStoreState>()(
             status: "idle",
             streamingText: "",
             yolo: session.yolo ?? false,
+            modeId: session.modeId ?? (session.yolo ? "bypassPermissions" : "default"),
+            availableModes: session.availableModes ?? FALLBACK_MODES,
             tokensCumulative: session.tokensCumulative ?? 0,
             costCumulativeUsdTicks: session.costCumulativeUsdTicks ?? 0,
             costEstimated: session.costEstimated ?? false,
@@ -524,6 +617,33 @@ function handleSessionUpdate(params: JsonValue, set: Setter) {
   // streamed text mid-message, fragmenting markdown that spans the flush
   // boundary (e.g. splitting a table in two). Drop them before they can
   // touch streamingText at all.
+  if (kind === "current_mode_update" || kind === "current_model_update") {
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      const modeId =
+        (typeof update.currentModeId === "string" && update.currentModeId) ||
+        (typeof update.modeId === "string" && update.modeId) ||
+        session.modeId;
+      const modelId =
+        (typeof update.currentModelId === "string" && update.currentModelId) ||
+        (typeof update.modelId === "string" && update.modelId) ||
+        session.modelId;
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: {
+            ...session,
+            modeId,
+            modelId,
+            yolo: modeId ? modeImpliesYolo(modeId) : session.yolo,
+          },
+        },
+      };
+    });
+    return;
+  }
+
   if (SILENT_KINDS.has(kind)) return;
 
   set((s) => {
@@ -753,6 +873,21 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
           [sessionId]: { ...session, workflows: { ...session.workflows, [runId]: run }, workflowOrder },
         },
       };
+    });
+    return;
+  }
+
+  if (kind === "model_changed") {
+    const modelId =
+      (typeof update.modelId === "string" && update.modelId) ||
+      (typeof update.model === "string" && update.model) ||
+      (typeof update.currentModelId === "string" && update.currentModelId) ||
+      undefined;
+    if (!modelId) return;
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      return { sessions: { ...s.sessions, [sessionId]: { ...session, modelId } } };
     });
     return;
   }

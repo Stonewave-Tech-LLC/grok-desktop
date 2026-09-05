@@ -7,21 +7,28 @@ export async function defaultCwd(): Promise<string> {
   return invoke("default_cwd");
 }
 
-export async function newSession(cwd: string, yolo = false): Promise<{ sessionId: string }> {
-  const result = (await invoke("new_session", { cwd, yolo })) as JsonValue;
-  const sessionId = (result as Record<string, JsonValue>)?.sessionId;
-  if (typeof sessionId !== "string") {
+export async function newSession(
+  cwd: string,
+  yolo = false,
+  modelId?: string,
+): Promise<{ sessionId: string; raw: JsonValue }> {
+  const result = (await invoke("new_session", { cwd, yolo, modelId })) as JsonValue;
+  const rec = asObj(result);
+  const fromRoot = typeof rec.sessionId === "string" ? rec.sessionId : undefined;
+  const fromMeta = typeof asObj(rec._meta).sessionId === "string" ? String(asObj(rec._meta).sessionId) : undefined;
+  const sessionId = fromRoot ?? fromMeta;
+  if (!sessionId) {
     throw new Error(`session/new did not return a sessionId: ${JSON.stringify(result)}`);
   }
-  return { sessionId };
+  return { sessionId, raw: result };
 }
 
 /// Reattaches a session created in a previous app run so new prompts continue
 /// the same backend context (grok persists sessions to disk independent of
 /// which process created them). Doesn't replay old messages — those are
 /// restored from our own persisted store state instead.
-export async function loadSession(sessionId: string, cwd: string): Promise<void> {
-  await invoke("load_session", { sessionId, cwd });
+export async function loadSession(sessionId: string, cwd: string): Promise<JsonValue> {
+  return invoke("load_session", { sessionId, cwd });
 }
 
 export interface RemoteSessionStub {
@@ -138,6 +145,14 @@ export interface ModelInfo {
 
 export async function currentModelInfo(): Promise<ModelInfo> {
   return invoke("current_model_info");
+}
+
+export async function setSessionModel(sessionId: string, modelId: string): Promise<JsonValue> {
+  return invoke("set_session_model", { sessionId, modelId });
+}
+
+export async function setSessionMode(sessionId: string, modeId: string): Promise<JsonValue> {
+  return invoke("set_session_mode", { sessionId, modeId });
 }
 
 export interface McpCapabilities {

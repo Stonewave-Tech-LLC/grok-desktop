@@ -14,7 +14,7 @@ import { AssetsPanel } from "./AssetsPanel";
 const PANEL_TITLES: Record<"activity" | "workflows" | "memory" | "assets", string> = {
   activity: "Activity",
   workflows: "Workflows",
-  assets: "Assets",
+  assets: "Studio",
   memory: "Memory",
 };
 

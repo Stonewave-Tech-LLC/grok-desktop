@@ -4,7 +4,7 @@ import { DiffView } from "./DiffView";
 import { useSessionStore } from "../store/sessions";
 import { readImageDataUrl } from "../lib/api";
 import { GeneratedImage } from "./GeneratedImage";
-import { extractMediaGen } from "../lib/assets";
+import { extractMediaGen, isImagineTool } from "../lib/assets";
 import { extractDescription, extractCommand } from "../lib/toolCallDisplay";
 
 const KIND_ICON: Record<string, string> = {
@@ -133,6 +133,7 @@ function ToolCallCardImpl({ raw }: { raw: Record<string, JsonValue> }) {
   const icon = KIND_ICON[kind] ?? "◆";
   const diff = extractDiff(raw);
   const media = extractMediaGen(raw);
+  const imagine = isImagineTool(raw);
   const description = extractDescription(raw);
   const command = extractCommand(raw);
   const headline = description || title;
@@ -140,7 +141,8 @@ function ToolCallCardImpl({ raw }: { raw: Record<string, JsonValue> }) {
   const showDiff = Boolean(diff) && (expanded || diffsAutoExpand);
   const stats = diff ? diffStats(diff) : undefined;
   const running = status === "in_progress";
-  const hasBody = Boolean(media || showDiff || expanded);
+  const forging = imagine && (running || status === "pending");
+  const hasBody = Boolean(media || showDiff || expanded || forging);
   const sg = statusGlyph(status);
 
   return (
@@ -179,6 +181,18 @@ function ToolCallCardImpl({ raw }: { raw: Record<string, JsonValue> }) {
           className="mt-0.5 rounded-[var(--gd-radius-sm)] overflow-hidden"
           style={{ background: "var(--gd-surface)", boxShadow: "var(--gd-panel-shadow)" }}
         >
+          {forging && !media && (
+            <div className="px-3 py-3">
+              <div className="gd-imagine-ring w-full max-w-[220px] aspect-[4/3]">
+                <div className="gd-imagine-plate h-full w-full flex items-center justify-center">
+                  <div className="gd-imagine-scan" />
+                  <span className="relative z-[1] text-[10px] font-mono uppercase tracking-[0.22em]" style={{ color: "var(--gd-text-muted)" }}>
+                    Imagine
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
           {media?.kind === "image" && <ImagePreview path={media.path} filename={media.filename} />}
           {media?.kind === "video" && (
             <div className="px-3 py-2.5 flex items-center gap-1.5 text-[11.5px]" style={{ color: "var(--gd-text-muted)" }}>

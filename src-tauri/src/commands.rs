@@ -28,10 +28,11 @@ pub fn init_status(state: State<'_, GrokState>) -> Result<Value, String> {
 }
 
 /// The current model name/description, read from initialize's cached
-/// `_meta.modelState`. Informational only — switching models isn't wired yet,
-/// since ACP's `session/set_model` accepted our calls (200 OK) without visibly
-/// changing anything in a live test, and this account only has one model
-/// anyway, so there was nothing to actually verify switching between.
+/// `_meta.modelState`. This is the *process-level catalog* (available models
+/// + the default current id) — a session's live selection lives on the
+/// session itself after `session/new` / `session/set_model`. The frontend
+/// treats this as the fallback catalog, not as proof of what a given session
+/// is running.
 #[tauri::command]
 pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> {
     let result = state.init_result.clone()?;
@@ -41,6 +42,45 @@ pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> 
         .cloned()
         .unwrap_or(Value::Null);
     Ok(model_state)
+}
+
+/// ACP `session/set_model`. The previous attempt looked like a no-op because
+/// the UI kept reading the initialize cache above instead of the session's
+/// own current id. This just forwards the RPC; the frontend owns the
+/// displayed selection and listens for grok's `model_changed` notification.
+#[tauri::command]
+pub async fn set_session_model(
+    state: State<'_, GrokState>,
+    session_id: String,
+    model_id: String,
+) -> Result<Value, String> {
+    state
+        .process
+        .request(
+            "session/set_model",
+            json!({ "sessionId": session_id, "modelId": model_id }),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// ACP `session/set_mode` — permission/operating mode (ask vs always-allow,
+/// plus whatever grok advertises on the session/new result). Mode ids are
+/// opaque; the frontend sends whatever the agent listed.
+#[tauri::command]
+pub async fn set_session_mode(
+    state: State<'_, GrokState>,
+    session_id: String,
+    mode_id: String,
+) -> Result<Value, String> {
+    state
+        .process
+        .request(
+            "session/set_mode",
+            json!({ "sessionId": session_id, "modeId": mode_id }),
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The MCP transport support grok-build actually advertised during
@@ -67,13 +107,24 @@ pub async fn new_session(
     state: State<'_, GrokState>,
     cwd: String,
     yolo: bool,
+    model_id: Option<String>,
 ) -> Result<Value, String> {
     let mut params = json!({
         "cwd": cwd,
         "mcpServers": mcp::probe_servers(&cwd)?,
     });
+    let mut meta = serde_json::Map::new();
     if yolo {
-        params["_meta"] = json!({ "yoloMode": true });
+        meta.insert("yoloMode".into(), json!(true));
+    }
+    if let Some(id) = model_id {
+        // grok's session/new `_meta` is the documented vendor hatch (yoloMode
+        // already lives here). `modelId` is best-effort — if this grok-build
+        // ignores it, the frontend follows up with session/set_model.
+        meta.insert("modelId".into(), json!(id));
+    }
+    if !meta.is_empty() {
+        params["_meta"] = Value::Object(meta);
     }
     state
         .process

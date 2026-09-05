@@ -22,7 +22,10 @@ import {
   onAcpEvent,
   getMemoryEnabled,
   memoryRuntimeStatus,
+  currentModelInfo,
+  setSessionModel,
 } from "./lib/api";
+import { parseSessionControls } from "./lib/sessionControls";
 import { MemoryToast } from "./components/MemoryToast";
 import { EmptyCanvas } from "./components/EmptyCanvas";
 
@@ -51,6 +54,9 @@ export default function App() {
     sessions,
     activeSessionId,
     registerSession,
+    applySessionControls,
+    setSessionModelLocal,
+    setModelCatalog,
     appendUserMessage,
     pendingPermissions,
     activityDockOpen,
@@ -133,6 +139,9 @@ export default function App() {
       mcpCapabilities()
         .then((caps) => console.log("[Anvil] grok-build MCP capabilities:", caps, "(stdio is spec-mandatory regardless)"))
         .catch((err) => console.warn("[Anvil] couldn't read MCP capabilities:", err));
+      currentModelInfo()
+        .then(setModelCatalog)
+        .catch((err) => console.warn("[Anvil] couldn't read model catalog:", err));
 
       setBootStatus("importing");
       // grok's own on-disk session history can be large; a failure here
@@ -148,7 +157,8 @@ export default function App() {
       const reattach = (async () => {
         if (active && sessionToReattach && !useSessionStore.getState().reattachedSessionIds.has(active)) {
           try {
-            await loadSession(active, sessionToReattach.cwd);
+            const raw = await loadSession(active, sessionToReattach.cwd);
+            applySessionControls(active, parseSessionControls(raw));
             markReattached(active);
           } catch (err) {
             setLastError(`Couldn't reconnect "${sessionToReattach.title}": ${String(err)}`);
@@ -188,8 +198,11 @@ export default function App() {
     let cancelled = false;
     (async () => {
       try {
-        await loadSession(activeSessionId, session.cwd);
-        if (!cancelled) markReattached(activeSessionId);
+        const raw = await loadSession(activeSessionId, session.cwd);
+        if (!cancelled) {
+          applySessionControls(activeSessionId, parseSessionControls(raw));
+          markReattached(activeSessionId);
+        }
       } catch (err) {
         if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
       }
@@ -200,16 +213,30 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, bootStatus]);
 
-  async function handleCreateSession(cwd: string, yolo: boolean) {
+  async function handleCreateSession(cwd: string, yolo: boolean, modelId?: string) {
     setNewSessionDialogOpen(false);
     try {
-      const { sessionId } = await newSession(cwd, yolo);
-      registerSession(sessionId, cwd, yolo);
+      const { sessionId, raw } = await newSession(cwd, yolo, modelId);
+      registerSession(sessionId, cwd, yolo, modelId);
+      applySessionControls(sessionId, parseSessionControls(raw));
       // `session/new` already established this session's backend context —
       // the lazy on-select reattach effect would otherwise redundantly
       // `session/load` it the moment it becomes active (which it does,
       // immediately, via registerSession).
       markReattached(sessionId);
+      // `_meta.modelId` on session/new is best-effort. If grok ignored it,
+      // follow up with the dedicated ACP method so the picker isn't a lie.
+      if (modelId) {
+        const applied = useSessionStore.getState().sessions[sessionId]?.modelId;
+        if (applied !== modelId) {
+          try {
+            await setSessionModel(sessionId, modelId);
+            setSessionModelLocal(sessionId, modelId);
+          } catch (err) {
+            setLastError(`Session started, but model switch failed: ${String(err)}`);
+          }
+        }
+      }
     } catch (err) {
       setLastError(`Couldn't start a session: ${String(err)}`);
     }
@@ -292,7 +319,7 @@ export default function App() {
                 onClick={() => openDockTab("assets")}
                 className={"gd-panel-tab" + (activityDockOpen && dockTab === "assets" ? " active" : "")}
               >
-                Assets
+                Studio
               </button>
               {/* Always rendered now (was gated on memoryActiveThisRun) so the
                   right edge doesn't jump depending on whether memory happens

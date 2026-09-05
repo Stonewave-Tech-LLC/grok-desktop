@@ -80,6 +80,8 @@ pub fn run() {
             commands::default_cwd,
             commands::init_status,
             commands::current_model_info,
+            commands::set_session_model,
+            commands::set_session_mode,
             commands::mcp_capabilities,
             commands::new_session,
             commands::load_session,
