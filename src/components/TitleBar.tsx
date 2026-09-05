@@ -66,16 +66,10 @@ function CaptionButton({
       aria-label={label}
       onClick={onClick}
       onMouseDown={(e) => e.stopPropagation()}
-      className="h-full w-[46px] flex items-center justify-center transition-colors"
-      style={{ color: "var(--gd-text-muted)" }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = danger ? "#e81123" : "var(--gd-accent-soft)";
-        e.currentTarget.style.color = danger ? "#fff" : "var(--gd-text)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "var(--gd-text-muted)";
-      }}
+      className={
+        "h-full w-[46px] flex items-center justify-center transition-colors bg-transparent text-[var(--gd-text-muted)] " +
+        (danger ? "hover:bg-[#e81123] hover:text-white" : "hover:bg-[var(--gd-accent-soft)] hover:text-[var(--gd-text)]")
+      }
     >
       {children}
     </button>
@@ -139,20 +133,29 @@ function handleDragMouseDown(e: React.MouseEvent) {
   win.startDragging();
 }
 
-export function TitleBar({ title }: { title: string }) {
+export function TitleBar({ title, extra }: { title: string; extra?: React.ReactNode }) {
   const leading = isWindows ? (
     <div className="w-[68px] h-full shrink-0" />
   ) : (
     <MacWindowControls />
   );
-  const trailing = isWindows ? <WindowsWindowControls /> : (
-    <div data-tauri-drag-region onMouseDown={handleDragMouseDown} className="w-[68px] h-full" />
-  );
+  // Mac used to trail with the same 68px empty drag spacer as `leading`, just
+  // to balance the traffic lights visually — that's what parked the pills
+  // ~68px in from the real window edge instead of letting them sit flush
+  // against it. Windows keeps its caption buttons as the true trailing edge,
+  // unaffected (they were never a spacer to begin with).
+  const trailing = isWindows ? <WindowsWindowControls /> : null;
 
   return (
     <div
       className="h-10 shrink-0 flex items-center justify-between select-none border-b"
-      style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
+      style={{
+        borderColor: "var(--gd-border)",
+        // Site's `.terminal-bar` wash (linear-gradient(180deg, rgba(255,255,255,0.04),
+        // transparent)) layered over the base metal fill — CSS background shorthand
+        // supports multiple comma-separated layers, gradient paints on top.
+        background: "linear-gradient(180deg, rgba(255,255,255,0.04), transparent), var(--gd-surface)",
+      }}
     >
       {/* The drag region lives only on the empty title/spacer areas, never
           on an ancestor of the window-control buttons — nesting it around
@@ -166,6 +169,19 @@ export function TitleBar({ title }: { title: string }) {
       >
         {title}
       </div>
+      {/* Dock tabs (slice 4) — not a drag region, sits between the title and
+          the trailing edge so clicks reach the buttons instead of starting a
+          window drag. On Mac (no trailing spacer/caption buttons anymore)
+          this cluster *is* the trailing edge — `pr-3` matches the traffic
+          lights' `pl-3` so both clusters sit flush against their side. */}
+      {extra && (
+        <div
+          className={"h-full flex items-center gap-1 " + (isWindows ? "pr-2" : "pr-3")}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {extra}
+        </div>
+      )}
       {trailing}
     </div>
   );

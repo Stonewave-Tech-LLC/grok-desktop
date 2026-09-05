@@ -4,7 +4,7 @@ import { DiffView } from "./DiffView";
 import { useSessionStore } from "../store/sessions";
 import { readImageDataUrl } from "../lib/api";
 import { GeneratedImage } from "./GeneratedImage";
-import { extractMediaGen } from "../lib/assets";
+import { extractMediaGen, isImagineTool } from "../lib/assets";
 import { extractDescription, extractCommand } from "../lib/toolCallDisplay";
 
 const KIND_ICON: Record<string, string> = {
@@ -16,16 +16,21 @@ const KIND_ICON: Record<string, string> = {
   think: "◌",
 };
 
-function statusColor(status: string): string {
+// Slice 3: the site's terminal mock marks a finished line with a bare `✓`
+// (`.t-ok`, green) rather than a status pill — same grammar here, extended
+// with the obvious `✗`/`⋯` counterparts the mock itself never needed an
+// example of. `pulse` drives the same `animate-pulse` treatment already used
+// for other "this is live" dots elsewhere in the app.
+function statusGlyph(status: string): { glyph: string; color: string; pulse?: boolean } {
   switch (status) {
     case "completed":
-      return "var(--gd-success)";
+      return { glyph: "✓", color: "var(--gd-success)" };
     case "failed":
-      return "var(--gd-danger)";
+      return { glyph: "✗", color: "var(--gd-danger)" };
     case "in_progress":
-      return "var(--gd-warning)";
+      return { glyph: "⋯", color: "var(--gd-text-muted)", pulse: true };
     default:
-      return "var(--gd-text-faint)";
+      return { glyph: "·", color: "var(--gd-text-faint)" };
   }
 }
 
@@ -128,6 +133,7 @@ function ToolCallCardImpl({ raw }: { raw: Record<string, JsonValue> }) {
   const icon = KIND_ICON[kind] ?? "◆";
   const diff = extractDiff(raw);
   const media = extractMediaGen(raw);
+  const imagine = isImagineTool(raw);
   const description = extractDescription(raw);
   const command = extractCommand(raw);
   const headline = description || title;
@@ -135,84 +141,96 @@ function ToolCallCardImpl({ raw }: { raw: Record<string, JsonValue> }) {
   const showDiff = Boolean(diff) && (expanded || diffsAutoExpand);
   const stats = diff ? diffStats(diff) : undefined;
   const running = status === "in_progress";
+  const forging = imagine && (running || status === "pending");
+  const hasBody = Boolean(media || showDiff || expanded || forging);
+  const sg = statusGlyph(status);
 
   return (
-    <div
-      className="rounded-[var(--gd-radius-md)] border overflow-hidden my-1.5 max-w-xl"
-      style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
-    >
-      <button onClick={() => setExpanded((e) => !e)} title={headline} className="w-full flex items-center gap-2 px-3 py-2 text-left">
-        <span className="text-[13px]" style={{ color: "var(--gd-text-faint)" }}>
+    <div className="my-0.5 max-w-2xl font-mono text-[12.5px]">
+      {/* Collapsed row reads like a forge-log line (site's `.terminal-body`
+          `✓`/`⋯` grammar) — no card border, just a hoverable log entry.
+          The metal panel treatment lives on the body below, once there's
+          actually something to show. */}
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        title={headline}
+        className="gd-glow-hover-row w-full flex items-center gap-2 px-2 py-1 rounded-[var(--gd-radius-sm)] text-left border border-transparent"
+      >
+        <span className={sg.pulse ? "animate-pulse shrink-0" : "shrink-0"} style={{ color: sg.color }}>
+          {sg.glyph}
+        </span>
+        <span className="shrink-0" style={{ color: "var(--gd-text-faint)" }}>
           {icon}
         </span>
-        <span className={running ? "gd-shimmer text-[13px] font-medium flex-1 truncate" : "text-[13px] font-medium flex-1 truncate"} style={running ? undefined : { color: "var(--gd-text)" }}>
+        <span className={running ? "gd-shimmer flex-1 truncate text-left" : "flex-1 truncate text-left"} style={running ? undefined : { color: "var(--gd-text)" }}>
           {headline}
         </span>
         {stats && !showDiff && (
-          <span className="text-[10px] font-mono shrink-0" style={{ color: "var(--gd-text-faint)" }}>
+          <span className="shrink-0" style={{ color: "var(--gd-text-faint)" }}>
             {stats.added > 0 && <span style={{ color: "var(--gd-success)" }}>+{stats.added} </span>}
             {stats.removed > 0 && <span style={{ color: "var(--gd-danger)" }}>-{stats.removed}</span>}
           </span>
         )}
-        <span
-          className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0"
-          style={{ color: statusColor(status), background: "var(--gd-surface-raised)" }}
-        >
-          {running ? (
-            <span className="inline-flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: statusColor(status) }} />
-              running
-            </span>
-          ) : (
-            status
-          )}
-        </span>
-        <span className="text-[11px] shrink-0" style={{ color: "var(--gd-text-faint)" }}>
-          {expanded ? "−" : "+"}
+        <span className="shrink-0" style={{ color: "var(--gd-text-faint)" }}>
+          {expanded ? "⌄" : "›"}
         </span>
       </button>
 
-      {media?.kind === "image" && <ImagePreview path={media.path} filename={media.filename} />}
-      {media?.kind === "video" && (
-        <div className="px-3 pb-2.5 flex items-center gap-1.5 text-[11.5px]" style={{ color: "var(--gd-text-muted)" }}>
-          <span aria-hidden>🎬</span>
-          <span className="truncate">{media.filename || media.path}</span>
-        </div>
-      )}
-
-      {showDiff && diff && (
-        <div className="px-3 pb-3">
-          <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} />
-        </div>
-      )}
-
-      {expanded && (
+      {hasBody && (
         <div
-          className="px-3 pb-3 text-[12px] overflow-x-auto"
-          style={{ borderTop: "1px solid var(--gd-border)", color: "var(--gd-text-muted)" }}
+          className="mt-0.5 rounded-[var(--gd-radius-sm)] overflow-hidden"
+          style={{ background: "var(--gd-surface)", boxShadow: "var(--gd-panel-shadow)" }}
         >
-          {command && (
-            <div className="pt-2">
-              <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: "var(--gd-text-faint)" }}>
-                Command
+          {forging && !media && (
+            <div className="px-3 py-3">
+              <div className="gd-imagine-ring w-full max-w-[220px] aspect-[4/3]">
+                <div className="gd-imagine-plate h-full w-full flex items-center justify-center">
+                  <div className="gd-imagine-scan" />
+                  <span className="relative z-[1] text-[10px] font-mono uppercase tracking-[0.22em]" style={{ color: "var(--gd-text-muted)" }}>
+                    Imagine
+                  </span>
+                </div>
               </div>
-              <pre
-                className="whitespace-pre-wrap break-words font-mono text-[11.5px] p-2 rounded-[var(--gd-radius-sm)]"
-                style={{ background: "var(--gd-bg)", color: "var(--gd-text)" }}
-              >
-                {command}
-              </pre>
             </div>
           )}
-          {textOutput && (
-            <pre className="whitespace-pre-wrap break-words pt-2 font-mono text-[12px]">{textOutput}</pre>
+          {media?.kind === "image" && <ImagePreview path={media.path} filename={media.filename} />}
+          {media?.kind === "video" && (
+            <div className="px-3 py-2.5 flex items-center gap-1.5 text-[11.5px]" style={{ color: "var(--gd-text-muted)" }}>
+              <span aria-hidden>🎬</span>
+              <span className="truncate">{media.filename || media.path}</span>
+            </div>
           )}
-          <details className="mt-1">
-            <summary className="cursor-pointer text-[11px]" style={{ color: "var(--gd-text-faint)" }}>
-              Raw
-            </summary>
-            <pre className="whitespace-pre-wrap break-words pt-1">{JSON.stringify(raw, null, 2)}</pre>
-          </details>
+
+          {showDiff && diff && (
+            <div className="px-3 py-3">
+              <DiffView path={diff.path} oldText={diff.oldText} newText={diff.newText} />
+            </div>
+          )}
+
+          {expanded && (
+            <div className="px-3 py-3 text-[12px] overflow-x-auto" style={{ color: "var(--gd-text-muted)" }}>
+              {command && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: "var(--gd-text-faint)" }}>
+                    Command
+                  </div>
+                  <pre
+                    className="whitespace-pre-wrap break-words text-[11.5px] p-2 rounded-[var(--gd-radius-sm)]"
+                    style={{ background: "var(--gd-bg)", color: "var(--gd-text)" }}
+                  >
+                    {command}
+                  </pre>
+                </div>
+              )}
+              {textOutput && <pre className="whitespace-pre-wrap break-words mt-2">{textOutput}</pre>}
+              <details className="mt-2">
+                <summary className="cursor-pointer text-[11px]" style={{ color: "var(--gd-text-faint)" }}>
+                  Raw
+                </summary>
+                <pre className="whitespace-pre-wrap break-words pt-1">{JSON.stringify(raw, null, 2)}</pre>
+              </details>
+            </div>
+          )}
         </div>
       )}
     </div>

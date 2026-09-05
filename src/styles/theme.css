@@ -40,6 +40,12 @@
   --gd-radius-md: 12px;
   --gd-radius-lg: 18px;
 
+  /* Shared "floating metal panel" shadow — dialogs (slice 2) and the
+     composer (slice 4) are all the same site-derived surface, one token
+     instead of copy-pasted inline shadow strings. */
+  --gd-panel-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.45), 0 16px 48px rgba(0, 0, 0, 0.45);
+
   --gd-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --gd-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --gd-ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -179,6 +185,25 @@ body {
   transform: translateY(0) scale(0.97);
 }
 
+/* Ghost button — site's `.btn-ghost` 1:1: transparent until hovered, no
+   color-coding (no warning-yellow/danger-red backgrounds). Used for the
+   secondary action on a decision (PermissionCard's Deny) so the one billet
+   stays the only loud thing on the panel — "same decision, different
+   clothes" instead of the old yellow-alert treatment. */
+.gd-ghost {
+  background: transparent;
+  border: 1px solid var(--gd-border-strong);
+  color: var(--gd-text-muted);
+  transition: color var(--gd-dur-fast) ease, border-color var(--gd-dur-fast) ease, background var(--gd-dur-fast) ease,
+    box-shadow var(--gd-dur-fast) ease;
+}
+.gd-ghost:hover {
+  color: var(--gd-text);
+  background: var(--gd-accent-soft);
+  border-color: var(--gd-border-glow);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.12);
+}
+
 /* White glow hover for non-billet interactive surfaces (secondary buttons,
    metal chrome). Heats the metal with white light, never a brand hue. Scale
    (not just color/border) is what actually reads as "alive" at a glance —
@@ -195,6 +220,62 @@ body {
 }
 .gd-glow-hover:active {
   transform: scale(0.94);
+}
+
+/* Full-width row variant: same glow/border/bg feedback, no scale. Scale(1.1)
+   on a w-full row clips at the container edge or overlaps neighboring rows —
+   it was only ever meant for icon-sized controls. */
+.gd-glow-hover-row {
+  transition: box-shadow var(--gd-dur-fast) var(--gd-ease-spring), border-color var(--gd-dur-fast) ease, background var(--gd-dur-fast) ease;
+}
+.gd-glow-hover-row:hover {
+  border-color: var(--gd-border-glow);
+  background: var(--gd-accent-soft);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.16);
+}
+.gd-glow-hover-row:active {
+  transform: scale(0.98);
+}
+
+/* Titlebar dock tabs (slice 4) — site's `.panel-tab`/`.panel-tab.active`
+   1:1: labeled pills, active = inverted billet, not icon squares. Replaces
+   the old unlabeled Activity/Workflows/Assets/Memory icon row. */
+.gd-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--gd-radius-sm);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--gd-text-faint);
+  border: 1px solid transparent;
+  background: transparent;
+  white-space: nowrap;
+  /* WKWebView paints its own blue default focus ring on plain buttons — sat
+     right on top of the billet in a slice-4 screenshot. Swap it for the same
+     white glow every other focusable control here uses, never leave `outline`
+     on its browser default. */
+  outline: none;
+  transition: background var(--gd-dur-fast) ease, color var(--gd-dur-fast) ease, border-color var(--gd-dur-fast) ease,
+    box-shadow var(--gd-dur-fast) ease;
+}
+.gd-panel-tab:hover {
+  color: var(--gd-text-muted);
+  background: var(--gd-accent-soft);
+}
+.gd-panel-tab:focus-visible {
+  box-shadow: 0 0 0 2px var(--gd-border-glow);
+}
+.gd-panel-tab.active {
+  color: var(--gd-accent-contrast);
+  background: var(--gd-billet);
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.15);
+}
+.gd-panel-tab:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 /* Breathing ring for controls that represent live, cancelable work (the
@@ -240,4 +321,264 @@ body {
 }
 .gd-pulse-accent:active {
   transform: scale(0.9);
+}
+
+/* Ambient background layer — the metal-dark chrome felt flat next to the
+   marketing site's orb/noise/vignette treatment (anvil-site globals.css).
+   PERF TEST (slice 3, in progress): the original version avoided
+   filter:blur() on the assumption it's too GPU-expensive to run
+   continuously in a webview — that was never actually measured. Testing
+   real blur(80px) (site's exact value) on the existing two orbs, same
+   sizing/gradient/animation otherwise, as a single-variable change so a
+   real CPU/GPU profile decides this instead of a design-time guess. If it
+   holds up under sustained drift (not just a one-shot dialog open like the
+   backdrop-blur test), keep it; if not, revert to the radial-gradient-only
+   fallback this comment used to describe. Noise layer stays static either
+   way. Stays monochrome per the header note above — white glow, not a
+   brand hue. */
+.gd-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.gd-ambient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  will-change: transform, opacity;
+}
+
+.gd-ambient-orb-1 {
+  top: -20%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  /* Alpha bumped 0.1 -> 0.16 (slice 3b): blur(80px) spreads the same core
+     alpha over a much larger area, so the pre-blur value reads dimmer than
+     it used to (p5 profiling: mean 19.0 -> 16.9 over a drift cycle, barely
+     perceptible). Site tunes its orb alphas 3-4x higher than these for the
+     same reason — its values were chosen with blur already applied. */
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 70%);
+  animation: gd-ambient-drift-1 34s var(--gd-ease) infinite alternate;
+}
+
+.gd-ambient-orb-2 {
+  bottom: -25%;
+  right: -15%;
+  width: 65%;
+  height: 65%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 70%);
+  animation: gd-ambient-drift-2 42s var(--gd-ease) infinite alternate;
+}
+
+@keyframes gd-ambient-drift-1 {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(4%, 6%) scale(1.12);
+    opacity: 0.9;
+  }
+}
+
+@keyframes gd-ambient-drift-2 {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-5%, -4%) scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+/* Static grain — a single inline SVG feTurbulence data-URI, painted once,
+   never re-rendered per frame. Kills the "flat plastic" look of a single
+   solid fill without costing anything at runtime. */
+.gd-ambient-noise {
+  position: absolute;
+  inset: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gd-ambient-orb-1,
+  .gd-ambient-orb-2 {
+    animation: none;
+  }
+}
+
+/* Slice 5: global boot splash. Wordmark gradient matches the site's
+   `.hero h1 .glow-word` formula (white -> zinc, clipped to text) plus a soft
+   white text-shadow for the "glow" pop the site doesn't need (its hero sits
+   in a full page of bright text; this sits alone on obsidian) — explicitly
+   monochrome, never the Forge cyan accent. */
+.gd-splash-wordmark {
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(180deg, #fff 0%, #e4e4e7 50%, #a1a1aa 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 32px rgba(255, 255, 255, 0.28);
+}
+
+/* 1:1 port of the site's `.nav-heat` scanning line, renamed into the app's
+   own token namespace — same white scan, no cyan, used in place of a
+   spinning macOS progress wheel. */
+.gd-heat-scan {
+  position: relative;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 15%,
+    rgba(255, 255, 255, 0.55) 50%,
+    rgba(255, 255, 255, 0.05) 85%,
+    transparent 100%
+  );
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.35);
+  opacity: 0.7;
+  animation: gd-heat-scan 5.5s ease-in-out infinite;
+}
+
+@keyframes gd-heat-scan {
+  0%,
+  100% {
+    transform: scaleX(0.55);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scaleX(1);
+    opacity: 0.9;
+  }
+}
+
+.gd-empty-wordmark {
+  font-size: clamp(4.2rem, 9vw, 6.4rem);
+  line-height: 0.9;
+  letter-spacing: -0.055em;
+}
+
+.gd-empty-wordmark .gd-splash-wordmark {
+  animation: gd-empty-glow 4.2s ease-in-out infinite;
+}
+
+.gd-empty-heat {
+  width: min(280px, 46vw);
+  height: 2px;
+}
+
+@keyframes gd-empty-glow {
+  0%,
+  100% {
+    text-shadow: 0 0 24px rgba(255, 255, 255, 0.22), 0 0 64px rgba(255, 255, 255, 0.12);
+  }
+  50% {
+    text-shadow: 0 0 48px rgba(255, 255, 255, 0.55), 0 0 96px rgba(255, 255, 255, 0.28);
+  }
+}
+
+/* Imagine overlay — forging plate, not a generic spinner. Metal language
+   only: white glow, heat-scan, grain. Signature of the generate moment. */
+.gd-imagine-grain {
+  pointer-events: none;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.035) 0.6px, transparent 0.6px);
+  background-size: 3px 3px;
+  opacity: 0.35;
+  mix-blend-mode: overlay;
+}
+
+.gd-imagine-ring {
+  position: relative;
+  border-radius: 22px;
+  padding: 1px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(255, 255, 255, 0.08);
+}
+.gd-imagine-ring::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(255, 255, 255, 0.04) 40deg,
+    rgba(255, 255, 255, 0.85) 90deg,
+    rgba(255, 255, 255, 0.04) 140deg,
+    transparent 200deg
+  );
+  animation: gd-imagine-spin 4.8s linear infinite;
+}
+
+.gd-imagine-plate {
+  position: relative;
+  z-index: 1;
+  border-radius: 21px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255, 255, 255, 0.07), transparent 55%),
+    var(--gd-metal-1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45),
+    0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.gd-imagine-scan {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 42%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0.02) 58%,
+    transparent 100%
+  );
+  animation: gd-imagine-scan 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.gd-imagine-wordmark {
+  font-size: clamp(2.4rem, 6vw, 3.6rem);
+  letter-spacing: 0.22em;
+  line-height: 1;
+  animation: gd-empty-glow 3.6s ease-in-out infinite;
+}
+
+@keyframes gd-imagine-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gd-imagine-scan {
+  0% {
+    transform: translateY(-70%);
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translateY(70%);
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gd-imagine-ring,
+  .gd-imagine-ring::before,
+  .gd-imagine-scan,
+  .gd-imagine-wordmark,
+  .gd-empty-wordmark .gd-splash-wordmark {
+    animation: none;
+  }
 }

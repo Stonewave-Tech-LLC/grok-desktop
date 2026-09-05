@@ -99,10 +99,15 @@ memory as available whenever these tools exist.
   fall back to `memory_get` on `~/.grok/memory/MEMORY.md` (global) and the
   current workspace's `MEMORY.md`. An empty search result is not proof of
   empty memory.
-- Grok Desktop (Anvil) mirrors a separate, user-curated knowledge base into
-  these same files under an `<!-- anvil:memory:begin -->` block, grouped by
-  type (project/decision/issue/person/preference/reference) — read it like
-  any other memory content, it's just as trustworthy.
+- Grok Desktop (Anvil) mirrors a curated operator layer into these same
+  files under an `<!-- anvil:memory:begin -->` block (state card first,
+  then typed entries: project/decision/issue/person/preference/reference,
+  plus episodic captures and playbooks). Read it like any other memory
+  content — it's just as trustworthy.
+- Also read, when present: `<repo>/.anvil/memory/STATE.md` (focus / last
+  decided / open blockers) and the typed markdown files beside it. Forge
+  Grok on this Mac uses the same paths. Prefer `memory_search` / `memory_get`
+  first; fall back to those files if search is empty.
 - Prefer the memory tools over shelling out to `find`/`grep`/`sqlite3`
   against `~/.grok/memory/` to inspect it manually — that's for a human
   debugging the system, not the normal path to recall something.
@@ -431,15 +436,178 @@ fn regenerate_index(base_dir: &Path) -> Result<(), String> {
     fs::write(base_dir.join("MEMORY.md"), out).map_err(|e| e.to_string())
 }
 
+// ───────────────────────── operator memory: project state card ─────────────────────────
+//
+// The `## Aktueller Zustand` pattern (Focus / Last decided / Open-Blockers,
+// auto last-commit) Neo already uses by hand in CLAUDE.md files — brought
+// natively into Anvil instead of inventing a competing format. See
+// docs/OPERATOR_MEMORY.md, diamond 4. One card per project workspace, no
+// global equivalent (project state is inherently per-workspace).
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StateCard {
+    focus: String,
+    last_decided: String,
+    open_blockers: String,
+    updated_at_ms: i64,
+    /// Never stored in STATE.md — always computed live from `git log` at
+    /// read time, same spirit as a git-hook-updated field but without
+    /// installing an actual hook from a GUI app.
+    last_commit: Option<String>,
+}
+
+impl StateCard {
+    fn has_content(&self) -> bool {
+        !self.focus.is_empty() || !self.last_decided.is_empty() || !self.open_blockers.is_empty()
+    }
+}
+
+fn state_card_path(cwd: &Path) -> PathBuf {
+    anvil_project_dir(cwd).join("STATE.md")
+}
+
+fn last_commit_summary(cwd: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["log", "-1", "--format=%h %s (%cr)"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+/// Three fixed `## `-headed sections, freeform prose body each — deliberately
+/// not the same frontmatter parser as typed entries (this is a single
+/// singular card, not a collection with a slug/description/status shape).
+fn parse_state_card(content: &str) -> StateCard {
+    let mut sections: [String; 3] = [String::new(), String::new(), String::new()];
+    let mut current: Option<usize> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(header) = trimmed.strip_prefix("## ") {
+            let key = header.trim().to_lowercase();
+            current = if key.starts_with("focus") {
+                Some(0)
+            } else if key.starts_with("last decided") {
+                Some(1)
+            } else if key.starts_with("open") || key.starts_with("blocker") {
+                Some(2)
+            } else {
+                None
+            };
+            continue;
+        }
+        if trimmed.starts_with('#') || trimmed.starts_with("<!--") {
+            continue;
+        }
+        if let Some(idx) = current {
+            if !sections[idx].is_empty() {
+                sections[idx].push('\n');
+            }
+            sections[idx].push_str(line);
+        }
+    }
+    StateCard {
+        focus: sections[0].trim().to_string(),
+        last_decided: sections[1].trim().to_string(),
+        open_blockers: sections[2].trim().to_string(),
+        updated_at_ms: 0,
+        last_commit: None,
+    }
+}
+
+fn render_state_card_file(focus: &str, last_decided: &str, open_blockers: &str) -> String {
+    let blank = |s: &str| {
+        let t = s.trim();
+        if t.is_empty() { "—" } else { t }.to_string()
+    };
+    format!(
+        "<!-- Generated/edited via Grok Desktop's Memory panel. \"Last commit\" isn't stored here — it's computed live from git each time this is read. -->\n\
+         # Current State\n\n\
+         ## Focus\n{}\n\n\
+         ## Last decided\n{}\n\n\
+         ## Open / Blockers\n{}\n",
+        blank(focus),
+        blank(last_decided),
+        blank(open_blockers),
+    )
+}
+
+fn load_state_card(cwd: &Path) -> StateCard {
+    let path = state_card_path(cwd);
+    let mut card = fs::read_to_string(&path)
+        .ok()
+        .map(|s| parse_state_card(&s))
+        .unwrap_or_default();
+    card.updated_at_ms = file_modified_ms(&path);
+    card.last_commit = last_commit_summary(cwd);
+    card
+}
+
+#[tauri::command]
+pub fn read_state_card(cwd: String) -> Result<StateCard, String> {
+    Ok(load_state_card(Path::new(&cwd)))
+}
+
+#[tauri::command]
+pub fn write_state_card(
+    cwd: String,
+    focus: String,
+    last_decided: String,
+    open_blockers: String,
+    state: tauri::State<'_, GrokState>,
+) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let path = state_card_path(cwd_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, render_state_card_file(&focus, &last_decided, &open_blockers)).map_err(|e| e.to_string())?;
+
+    if state.memory_active {
+        regenerate_bridge_project(cwd_path, &anvil_project_dir(cwd_path))?;
+    }
+    Ok(())
+}
+
 // ───────────────────────── grok-native bridge ─────────────────────────
 
 const BRIDGE_BEGIN: &str = "<!-- anvil:memory:begin — generated by Grok Desktop, do not edit directly, edit via the Memory panel -->";
 const BRIDGE_END: &str = "<!-- anvil:memory:end -->";
 
-fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
+fn render_state_card_bridge_section(card: &StateCard) -> String {
+    if !card.has_content() && card.last_commit.is_none() {
+        return String::new();
+    }
     let mut out = String::new();
-    out.push_str(BRIDGE_BEGIN);
-    out.push('\n');
+    out.push_str("## Current State\n");
+    if !card.focus.is_empty() {
+        out.push_str(&format!("- **Focus**: {}\n", card.focus.replace('\n', " ")));
+    }
+    if !card.last_decided.is_empty() {
+        out.push_str(&format!("- **Last decided**: {}\n", card.last_decided.replace('\n', " ")));
+    }
+    if !card.open_blockers.is_empty() {
+        out.push_str(&format!("- **Open/Blockers**: {}\n", card.open_blockers.replace('\n', " ")));
+    }
+    if let Some(commit) = &card.last_commit {
+        out.push_str(&format!("- **Last commit**: {commit}\n"));
+    }
+    out
+}
+
+fn render_entries_bridge_section(entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
     let mut current_type = String::new();
     for e in entries {
         if e.r#type != current_type {
@@ -448,6 +616,28 @@ fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
         }
         out.push_str(&format!("- **{}**: {}\n", e.name, e.description));
     }
+    out
+}
+
+fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
+    out.push_str(BRIDGE_BEGIN);
+    out.push('\n');
+    out.push_str(&render_entries_bridge_section(entries));
+    out.push_str(BRIDGE_END);
+    out.push('\n');
+    out
+}
+
+/// Project scope's bridge additionally leads with the state card (diamond 4:
+/// it's the first thing grok should read, not one entry among many) — global
+/// scope has no state card at all, so it keeps using `render_bridge_block`.
+fn render_project_bridge_block(card: &StateCard, entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
+    out.push_str(BRIDGE_BEGIN);
+    out.push('\n');
+    out.push_str(&render_state_card_bridge_section(card));
+    out.push_str(&render_entries_bridge_section(entries));
     out.push_str(BRIDGE_END);
     out.push('\n');
     out
@@ -481,7 +671,8 @@ fn upsert_bridge_block(grok_memory_file: &Path, block: &str) -> Result<(), Strin
 
 fn regenerate_bridge_project(cwd: &Path, project_base_dir: &Path) -> Result<(), String> {
     let entries = scan_scope(project_base_dir);
-    let block = render_bridge_block(&entries);
+    let card = load_state_card(cwd);
+    let block = render_project_bridge_block(&card, &entries);
     let target = grok_memory_workspace_file(cwd).ok_or("could not resolve home directory")?;
     upsert_bridge_block(&target, &block)
 }
@@ -498,11 +689,19 @@ fn regenerate_bridge_global(global_base_dir: &Path) -> Result<(), String> {
 #[tauri::command]
 pub fn list_anvil_entries(cwd: Option<String>) -> Result<Vec<MemoryEntryMeta>, String> {
     let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push_scope = |dir: std::path::PathBuf| {
+        let key = fs::canonicalize(&dir).unwrap_or(dir);
+        if !seen.insert(key.clone()) {
+            return;
+        }
+        out.extend(scan_scope(&key));
+    };
     if let Some(cwd) = &cwd {
-        out.extend(scan_scope(&anvil_project_dir(Path::new(cwd))));
+        push_scope(anvil_project_dir(Path::new(cwd)));
     }
     if let Some(global_dir) = anvil_global_dir() {
-        out.extend(scan_scope(&global_dir));
+        push_scope(global_dir);
     }
     Ok(out)
 }
@@ -596,5 +795,241 @@ pub fn delete_anvil_entry(
         }
     }
 
+    Ok(())
+}
+
+// ───────────────────────── operator memory: dream (densify + learn) ─────────────────────────
+//
+// Three clocks (see docs/OPERATOR_MEMORY.md): compaction (grok, in-session,
+// not our concern), flush (grok captures a graded session summary — v1
+// promotes it into an episodic entry), dream (cross-session densify + learn
+// — this). Copy-on-write throughout: a dream never touches the live
+// `.anvil/memory/` store directly. It writes a *candidate* under the
+// sibling `.anvil/dream/` directory (deliberately NOT inside
+// `.anvil/memory/` — `scan_scope` there treats every subdirectory as a type,
+// which would make a `.dream-candidate` folder show up as bogus entries).
+// The cockpit shows what a pending candidate would change; a human
+// Attaches or Discards. Nothing here auto-attaches.
+//
+// grok-build's own `/dream` (like `/flush`, see v1) is TUI-only and isn't
+// exposed over ACP — it can't be triggered remotely, and it operates on
+// grok's OWN `~/.grok/memory/` store, not this curated layer anyway. This
+// is Anvil's own synthesis, run as one explicit turn on the current
+// session (same mechanism as Capture Now), never presented as if it were
+// grok's native `/dream`.
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DreamStateCard {
+    focus: Option<String>,
+    last_decided: Option<String>,
+    open_blockers: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DreamEpisodic {
+    name: String,
+    description: String,
+    body: String,
+    #[serde(default)]
+    supersedes: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DreamPlaybook {
+    name: String,
+    description: String,
+    body: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct DreamMetaFile {
+    generated_at_ms: i64,
+    summary: String,
+    status: String, // "pending" | "attached" | "discarded"
+    superseded_slugs: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DreamCandidateInfo {
+    generated_at_ms: i64,
+    summary: String,
+    status: String,
+    superseded_count: usize,
+    entries: Vec<MemoryEntryMeta>,
+    has_state_card_update: bool,
+    state_card: Option<StateCard>,
+}
+
+fn dream_dir(cwd: &Path) -> PathBuf {
+    find_repo_root(cwd).join(".anvil").join("dream")
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn unique_dream_slug(prefix: &str, index: usize) -> String {
+    format!("{prefix}-{}-{}", now_ms(), index)
+}
+
+fn write_candidate_entry(dir: &Path, type_name: &str, slug: &str, name: &str, description: &str, body: &str) -> Result<(), String> {
+    let type_dir = dir.join(type_name);
+    fs::create_dir_all(&type_dir).map_err(|e| e.to_string())?;
+    let safe_slug = {
+        let s = slugify(slug);
+        if s.is_empty() { "entry".to_string() } else { s }
+    };
+    let path = type_dir.join(format!("{safe_slug}.md"));
+    fs::write(&path, render_entry(name, type_name, description, None, body)).map_err(|e| e.to_string())
+}
+
+/// Writes a brand-new candidate, replacing whatever pending/attached/
+/// discarded one existed before — a fresh dream always supersedes the
+/// previous candidate's *proposal*, regardless of what the human did with
+/// it (an attached one already copied its useful content into the live
+/// store; a discarded one was already rejected).
+#[tauri::command]
+pub fn write_dream_candidate(
+    cwd: String,
+    state_card: Option<DreamStateCard>,
+    episodics: Vec<DreamEpisodic>,
+    playbooks: Vec<DreamPlaybook>,
+    summary: String,
+) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let dir = dream_dir(cwd_path);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    if let Some(card) = &state_card {
+        let rendered = render_state_card_file(
+            card.focus.as_deref().unwrap_or(""),
+            card.last_decided.as_deref().unwrap_or(""),
+            card.open_blockers.as_deref().unwrap_or(""),
+        );
+        fs::write(dir.join("STATE.md"), rendered).map_err(|e| e.to_string())?;
+    }
+
+    let mut superseded_slugs = Vec::new();
+    for (i, e) in episodics.iter().enumerate() {
+        let slug = unique_dream_slug("dream-episodic", i);
+        write_candidate_entry(&dir, "episodic", &slug, &e.name, &e.description, &e.body)?;
+        superseded_slugs.extend(e.supersedes.iter().cloned());
+    }
+    for (i, p) in playbooks.iter().enumerate() {
+        let slug = unique_dream_slug("dream-playbook", i);
+        write_candidate_entry(&dir, "playbook", &slug, &p.name, &p.description, &p.body)?;
+    }
+
+    let meta = DreamMetaFile {
+        generated_at_ms: now_ms(),
+        summary,
+        status: "pending".to_string(),
+        superseded_slugs,
+    };
+    fs::write(dir.join("DREAM_META.json"), serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn read_dream_candidate(cwd: String) -> Result<Option<DreamCandidateInfo>, String> {
+    let dir = dream_dir(Path::new(&cwd));
+    let Ok(meta_raw) = fs::read_to_string(dir.join("DREAM_META.json")) else {
+        return Ok(None);
+    };
+    let meta: DreamMetaFile = serde_json::from_str(&meta_raw).map_err(|e| e.to_string())?;
+    let entries = scan_scope(&dir);
+    let state_card = fs::read_to_string(dir.join("STATE.md")).ok().map(|s| {
+        let mut card = parse_state_card(&s);
+        card.last_commit = None;
+        card
+    });
+    Ok(Some(DreamCandidateInfo {
+        generated_at_ms: meta.generated_at_ms,
+        summary: meta.summary,
+        status: meta.status,
+        superseded_count: meta.superseded_slugs.len(),
+        has_state_card_update: state_card.is_some(),
+        state_card,
+        entries,
+    }))
+}
+
+/// Copies the candidate's entries into the live store, deletes whatever it
+/// declared superseded, overwrites STATE.md if a state-card update was
+/// proposed, then regenerates the index and bridge exactly like a normal
+/// write — this is the *only* place a dream ever touches the live store,
+/// and only on explicit human action.
+#[tauri::command]
+pub fn attach_dream_candidate(cwd: String, state: tauri::State<'_, GrokState>) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let dir = dream_dir(cwd_path);
+    let meta_raw = fs::read_to_string(dir.join("DREAM_META.json")).map_err(|_| "no pending dream to attach".to_string())?;
+    let mut meta: DreamMetaFile = serde_json::from_str(&meta_raw).map_err(|e| e.to_string())?;
+    if meta.status != "pending" {
+        return Err(format!("dream is not pending (status: {})", meta.status));
+    }
+
+    let live_dir = anvil_project_dir(cwd_path);
+
+    for slug in &meta.superseded_slugs {
+        let path = live_dir.join("episodic").join(format!("{slug}.md"));
+        let _ = fs::remove_file(path);
+    }
+
+    for entry_type in ["episodic", "playbook"] {
+        let src_dir = dir.join(entry_type);
+        let Ok(read) = fs::read_dir(&src_dir) else { continue };
+        let dst_dir = live_dir.join(entry_type);
+        fs::create_dir_all(&dst_dir).map_err(|e| e.to_string())?;
+        for f in read.flatten() {
+            let src = f.path();
+            if src.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Some(name) = src.file_name() {
+                fs::copy(&src, dst_dir.join(name)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    let candidate_state = dir.join("STATE.md");
+    if candidate_state.is_file() {
+        let content = fs::read_to_string(&candidate_state).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&live_dir).map_err(|e| e.to_string())?;
+        fs::write(live_dir.join("STATE.md"), content).map_err(|e| e.to_string())?;
+    }
+
+    regenerate_index(&live_dir)?;
+    if state.memory_active {
+        regenerate_bridge_project(cwd_path, &live_dir)?;
+    }
+
+    meta.status = "attached".to_string();
+    fs::write(dir.join("DREAM_META.json"), serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn discard_dream_candidate(cwd: String) -> Result<(), String> {
+    let dir = dream_dir(Path::new(&cwd));
+    if let Ok(meta_raw) = fs::read_to_string(dir.join("DREAM_META.json")) {
+        if let Ok(mut meta) = serde_json::from_str::<DreamMetaFile>(&meta_raw) {
+            meta.status = "discarded".to_string();
+            if let Ok(rendered) = serde_json::to_string_pretty(&meta) {
+                let _ = fs::write(dir.join("DREAM_META.json"), rendered);
+            }
+        }
+    }
     Ok(())
 }

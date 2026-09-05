@@ -6,6 +6,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::mcp;
 use crate::state::GrokState;
 
 /// The frontend doesn't have a home directory concept of its own — resolve it here
@@ -27,10 +28,11 @@ pub fn init_status(state: State<'_, GrokState>) -> Result<Value, String> {
 }
 
 /// The current model name/description, read from initialize's cached
-/// `_meta.modelState`. Informational only — switching models isn't wired yet,
-/// since ACP's `session/set_model` accepted our calls (200 OK) without visibly
-/// changing anything in a live test, and this account only has one model
-/// anyway, so there was nothing to actually verify switching between.
+/// `_meta.modelState`. This is the *process-level catalog* (available models
+/// + the default current id) — a session's live selection lives on the
+/// session itself after `session/new` / `session/set_model`. The frontend
+/// treats this as the fallback catalog, not as proof of what a given session
+/// is running.
 #[tauri::command]
 pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> {
     let result = state.init_result.clone()?;
@@ -42,18 +44,87 @@ pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> 
     Ok(model_state)
 }
 
+/// ACP `session/set_model`. The previous attempt looked like a no-op because
+/// the UI kept reading the initialize cache above instead of the session's
+/// own current id. This just forwards the RPC; the frontend owns the
+/// displayed selection and listens for grok's `model_changed` notification.
+#[tauri::command]
+pub async fn set_session_model(
+    state: State<'_, GrokState>,
+    session_id: String,
+    model_id: String,
+) -> Result<Value, String> {
+    state
+        .process
+        .request(
+            "session/set_model",
+            json!({ "sessionId": session_id, "modelId": model_id }),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// ACP `session/set_mode` — permission/operating mode (ask vs always-allow,
+/// plus whatever grok advertises on the session/new result). Mode ids are
+/// opaque; the frontend sends whatever the agent listed.
+#[tauri::command]
+pub async fn set_session_mode(
+    state: State<'_, GrokState>,
+    session_id: String,
+    mode_id: String,
+) -> Result<Value, String> {
+    state
+        .process
+        .request(
+            "session/set_mode",
+            json!({ "sessionId": session_id, "modeId": mode_id }),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The MCP transport support grok-build actually advertised during
+/// `initialize` — read straight out of the already-cached init_result
+/// rather than a new RPC call, same pattern as `current_model_info`. Per
+/// the ACP schema, stdio transport has no corresponding capability flag at
+/// all (it's mandatory for every agent unconditionally); this only ever
+/// reports http/sse, defaulting both to false if the agent didn't mention
+/// `agentCapabilities.mcpCapabilities` at all — matching the schema's own
+/// documented default.
+#[tauri::command]
+pub fn mcp_capabilities(state: State<'_, GrokState>) -> Result<Value, String> {
+    let result = state.init_result.clone()?;
+    let caps = result
+        .get("agentCapabilities")
+        .and_then(|c| c.get("mcpCapabilities"))
+        .cloned()
+        .unwrap_or_else(|| json!({ "http": false, "sse": false }));
+    Ok(caps)
+}
+
 #[tauri::command]
 pub async fn new_session(
     state: State<'_, GrokState>,
     cwd: String,
     yolo: bool,
+    model_id: Option<String>,
 ) -> Result<Value, String> {
     let mut params = json!({
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp::probe_servers(&cwd)?,
     });
+    let mut meta = serde_json::Map::new();
     if yolo {
-        params["_meta"] = json!({ "yoloMode": true });
+        meta.insert("yoloMode".into(), json!(true));
+    }
+    if let Some(id) = model_id {
+        // grok's session/new `_meta` is the documented vendor hatch (yoloMode
+        // already lives here). `modelId` is best-effort — if this grok-build
+        // ignores it, the frontend follows up with session/set_model.
+        meta.insert("modelId".into(), json!(id));
+    }
+    if !meta.is_empty() {
+        params["_meta"] = Value::Object(meta);
     }
     state
         .process
@@ -79,7 +150,7 @@ pub async fn load_session(
     let params = json!({
         "sessionId": session_id,
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp::probe_servers(&cwd)?,
     });
     state
         .process
@@ -231,4 +302,57 @@ pub fn save_image_as(source_path: String, dest_path: String) -> Result<(), Strin
     std::fs::copy(&source_path, &dest_path)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Lists sessions grok itself has persisted under `~/.grok/sessions/`,
+/// independent of which ones *this* app instance created — this is what lets
+/// the sidebar surface sessions started from the `grok` TUI. Follows ACP
+/// `session/list`'s cursor pagination (`cursor` in, `sessions[]` +
+/// `nextCursor` out), same contract Forge (the sibling macOS ACP client)
+/// already relies on. Hard-capped at 1000 entries as a backstop against an
+/// unbounded on-disk history, not a normal case.
+///
+/// NOTE: this command's wire shape is inferred from ACP's own pagination
+/// convention and Forge's already-working contract, not confirmed against a
+/// live capture the way the rest of docs/protocol-notes/README.md was — this
+/// box has no `grok` CLI or Rust toolchain to test against. The frontend
+/// (`listSessions` in `lib/api.ts`) does defensive field lookup on the
+/// returned objects for the same reason.
+#[tauri::command]
+pub async fn list_sessions(state: State<'_, GrokState>) -> Result<Value, String> {
+    const MAX_SESSIONS: usize = 1000;
+    let mut sessions: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    loop {
+        let mut params = json!({});
+        if let Some(c) = &cursor {
+            params["cursor"] = json!(c);
+        }
+        let result = state
+            .process
+            .request("session/list", params)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let page = result
+            .get("sessions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let page_was_empty = page.is_empty();
+        sessions.extend(page);
+
+        cursor = result
+            .get("nextCursor")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if cursor.is_none() || page_was_empty || sessions.len() >= MAX_SESSIONS {
+            break;
+        }
+    }
+
+    sessions.truncate(MAX_SESSIONS);
+    Ok(json!(sessions))
 }

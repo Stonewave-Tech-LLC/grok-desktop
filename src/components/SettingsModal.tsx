@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { motion } from "framer-motion";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { setMemoryEnabled as setMemoryEnabledBackend } from "../lib/api";
-import { useSessionStore } from "../store/sessions";
+import { mcpCapabilities, setMemoryEnabled as setMemoryEnabledBackend, type McpCapabilities } from "../lib/api";
+import { useSessionStore, type ImagineAspect } from "../store/sessions";
 
-type Section = "general" | "about" | "memory";
+type Section = "general" | "imagine" | "agent" | "about" | "memory";
 
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
   return (
@@ -57,24 +58,189 @@ function NavItem({ label, icon, active, onClick }: { label: string; icon: React.
   );
 }
 
-function GeneralSection({ ready }: { ready: boolean }) {
+function Row({ children }: { children: React.ReactNode }) {
   return (
-    <div>
-      <div className="text-[13px] font-semibold mb-3" style={{ color: "var(--gd-text)" }}>
+    <div
+      className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-[var(--gd-radius-md)] border text-[12.5px]"
+      style={{ borderColor: "var(--gd-border)", background: "var(--gd-metal-1)" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const ASPECTS: { id: ImagineAspect; label: string }[] = [
+  { id: "auto", label: "Auto" },
+  { id: "1:1", label: "1:1" },
+  { id: "16:9", label: "16:9" },
+  { id: "9:16", label: "9:16" },
+  { id: "4:3", label: "4:3" },
+  { id: "3:4", label: "3:4" },
+];
+
+function GeneralSection({ ready }: { ready: boolean }) {
+  const defaultYolo = useSessionStore((s) => s.defaultYolo);
+  const setDefaultYolo = useSessionStore((s) => s.setDefaultYolo);
+  const defaultModelId = useSessionStore((s) => s.defaultModelId);
+  const setDefaultModelId = useSessionStore((s) => s.setDefaultModelId);
+  const modelCatalog = useSessionStore((s) => s.modelCatalog);
+  const models = modelCatalog?.availableModels ?? [];
+
+  return (
+    <div className="space-y-3">
+      <div className="text-[13px] font-semibold" style={{ color: "var(--gd-text)" }}>
         General
       </div>
-      <div
-        className="flex items-center justify-between px-3 py-2.5 rounded-[var(--gd-radius-md)] border text-[12.5px]"
-        style={{ borderColor: "var(--gd-border)", background: "var(--gd-metal-1)", color: "var(--gd-text-muted)" }}
-      >
-        <span>grok CLI connection</span>
-        <span className="flex items-center gap-1.5" style={{ color: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
+      <Row>
+        <span style={{ color: "var(--gd-text-muted)" }}>grok CLI</span>
+        <span className="flex items-center gap-1.5 font-mono" style={{ color: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
           <span
             className={ready ? "h-1.5 w-1.5 rounded-full" : "h-1.5 w-1.5 rounded-full animate-pulse"}
             style={{ background: "currentColor" }}
           />
           {ready ? "Connected" : "Connecting…"}
         </span>
+      </Row>
+      <Row>
+        <div>
+          <div style={{ color: "var(--gd-text)" }}>Default permissions</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+            Applied to new sessions
+          </div>
+        </div>
+        <Toggle checked={defaultYolo} onChange={setDefaultYolo} />
+      </Row>
+      <div className="text-[11px] px-1" style={{ color: "var(--gd-text-faint)" }}>
+        {defaultYolo ? "Always Allow" : "Ask before edits"}
+      </div>
+      {models.length > 0 && (
+        <div>
+          <div className="text-[11px] font-medium mb-1.5 px-0.5" style={{ color: "var(--gd-text-muted)" }}>
+            Default model
+          </div>
+          <div className="flex flex-col gap-1">
+            {models.map((m) => {
+              const active = (defaultModelId ?? modelCatalog?.currentModelId) === m.modelId;
+              return (
+                <button
+                  key={m.modelId}
+                  onClick={() => setDefaultModelId(m.modelId)}
+                  className="text-left px-3 py-2 rounded-[var(--gd-radius-sm)] border"
+                  style={{
+                    borderColor: active ? "var(--gd-accent)" : "var(--gd-border)",
+                    background: active ? "var(--gd-accent-soft)" : "var(--gd-metal-1)",
+                    color: active ? "var(--gd-text)" : "var(--gd-text-muted)",
+                  }}
+                >
+                  {m.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImagineSection() {
+  const imagineAutoOpen = useSessionStore((s) => s.imagineAutoOpen);
+  const setImagineAutoOpen = useSessionStore((s) => s.setImagineAutoOpen);
+  const aspect = useSessionStore((s) => s.imagineDefaultAspect);
+  const setAspect = useSessionStore((s) => s.setImagineDefaultAspect);
+
+  return (
+    <div className="space-y-3">
+      <div className="text-[13px] font-semibold" style={{ color: "var(--gd-text)" }}>
+        Imagine
+      </div>
+      <Row>
+        <div>
+          <div style={{ color: "var(--gd-text)" }}>Show overlay while generating</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+            Full-pane plate, then the still itself
+          </div>
+        </div>
+        <Toggle checked={imagineAutoOpen} onChange={setImagineAutoOpen} />
+      </Row>
+      <div>
+        <div className="text-[11px] font-medium mb-1.5 px-0.5" style={{ color: "var(--gd-text-muted)" }}>
+          Preferred frame
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {ASPECTS.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => setAspect(a.id)}
+              className="h-7 px-2.5 rounded-full text-[11px] font-medium"
+              style={{
+                color: aspect === a.id ? "var(--gd-accent-contrast)" : "var(--gd-text-muted)",
+                background: aspect === a.id ? "var(--gd-accent)" : "var(--gd-metal-1)",
+                border: aspect === a.id ? "1px solid transparent" : "1px solid var(--gd-border)",
+              }}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+        <div className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--gd-text-faint)" }}>
+          A hint for new generations — grok still picks the tool. Studio is the working set: edit, animate, and reuse from the last still, not a photo dump.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentSection() {
+  const diffsAutoExpand = useSessionStore((s) => s.diffsAutoExpand);
+  const toggleDiffsAutoExpand = useSessionStore((s) => s.toggleDiffsAutoExpand);
+  const [caps, setCaps] = useState<McpCapabilities | undefined>(undefined);
+
+  useEffect(() => {
+    mcpCapabilities().then(setCaps).catch(() => setCaps({ http: false, sse: false }));
+  }, []);
+
+  return (
+    <div className="space-y-3">
+      <div className="text-[13px] font-semibold" style={{ color: "var(--gd-text)" }}>
+        Agent
+      </div>
+      <Row>
+        <div>
+          <div style={{ color: "var(--gd-text)" }}>Expand diffs automatically</div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+            Same as the Diffs pill in the titlebar
+          </div>
+        </div>
+        <Toggle checked={diffsAutoExpand} onChange={() => toggleDiffsAutoExpand()} />
+      </Row>
+      <div>
+        <div className="text-[11px] font-medium mb-1.5 px-0.5" style={{ color: "var(--gd-text-muted)" }}>
+          MCP transports grok advertised
+        </div>
+        <Row>
+          <span style={{ color: "var(--gd-text-muted)" }}>stdio</span>
+          <span className="font-mono text-[11px]" style={{ color: "var(--gd-success)" }}>
+            required
+          </span>
+        </Row>
+        <div className="h-1" />
+        <Row>
+          <span style={{ color: "var(--gd-text-muted)" }}>http</span>
+          <span className="font-mono text-[11px]" style={{ color: caps?.http ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
+            {caps ? (caps.http ? "yes" : "no") : "…"}
+          </span>
+        </Row>
+        <div className="h-1" />
+        <Row>
+          <span style={{ color: "var(--gd-text-muted)" }}>sse</span>
+          <span className="font-mono text-[11px]" style={{ color: caps?.sse ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
+            {caps ? (caps.sse ? "yes" : "no") : "…"}
+          </span>
+        </Row>
+        <div className="text-[11px] mt-2 leading-relaxed" style={{ color: "var(--gd-text-faint)" }}>
+          chrome-devtools is always probed. graphify attaches when this workspace already has a graph.json.
+        </div>
       </div>
     </div>
   );
@@ -84,6 +250,8 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
   const memoryEnabled = useSessionStore((s) => s.memoryEnabled);
   const memoryActiveThisRun = useSessionStore((s) => s.memoryActiveThisRun);
   const setMemoryEnabled = useSessionStore((s) => s.setMemoryEnabled);
+  const autoDream = useSessionStore((s) => s.autoDream);
+  const setAutoDream = useSessionStore((s) => s.setAutoDream);
   const [saving, setSaving] = useState(false);
 
   async function handleToggle(next: boolean) {
@@ -133,18 +301,33 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
         <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: "currentColor" }} />
         {saving ? "Saving…" : statusLabel}
       </div>
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-[var(--gd-radius-md)] border mt-3"
+        style={{ borderColor: "var(--gd-border)", background: "var(--gd-metal-1)" }}
+      >
+        <div>
+          <div className="text-[12.5px]" style={{ color: "var(--gd-text)" }}>
+            Dream automatically
+          </div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+            After grok consolidates, or 5 episodics + 24h — candidate only, never auto-attach
+          </div>
+        </div>
+        <Toggle checked={autoDream} onChange={setAutoDream} />
+      </div>
       <div className="text-[11.5px] mt-3 leading-relaxed" style={{ color: "var(--gd-text-faint)" }}>
         Stores notes in <code>.anvil/memory/</code> (this project) and{" "}
         <code>~/.anvil/memory/</code> (global), and bridges them into grok's own memory so
-        they're recalled automatically in future sessions. Also seeds a small policy file
-        at <code>~/.grok/rules/</code> so grok actually searches memory proactively instead
-        of just having the tools without using them. Changes take effect after restarting
-        Grok Desktop.
+        they're recalled automatically in future sessions. Semantic recall is grok's
+        index (FTS5, plus vectors if you set <code>[memory.embedding]</code> in{" "}
+        <code>~/.grok/config.toml</code>) — Anvil does not keep a second embedding
+        database. Also seeds <code>~/.grok/rules/</code> so grok searches proactively.
+        Changes take effect after restarting Anvil.
       </div>
       {memoryActiveThisRun && (
         <button
           onClick={onBrowse}
-          className="gd-glow-hover mt-4 w-full text-[12px] font-medium px-3 py-2 rounded-[var(--gd-radius-sm)] border border-transparent"
+          className="gd-glow-hover-row mt-4 w-full text-[12px] font-medium px-3 py-2 rounded-[var(--gd-radius-sm)] border border-transparent"
           style={{ color: "var(--gd-text)", background: "var(--gd-metal-1)" }}
         >
           Browse memory files
@@ -169,7 +352,7 @@ function AboutSection() {
         />
         <div>
           <div className="text-[14px] font-semibold" style={{ color: "var(--gd-text)" }}>
-            Grok Desktop
+            Anvil
           </div>
           <div className="text-[11px]" style={{ color: "var(--gd-text-faint)" }}>
             v0.1.0
@@ -203,15 +386,29 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
   }
 
   return (
-    <div
+    <motion.div
+      key="settings-modal-backdrop"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
       className="absolute inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.6)" }}
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
       onClick={onClose}
     >
-      <div
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 4 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
-        className="gd-pop w-[520px] h-[380px] rounded-[var(--gd-radius-lg)] border flex overflow-hidden"
-        style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
+        className="w-[640px] h-[460px] rounded-[var(--gd-radius-lg)] border flex overflow-hidden"
+        style={{
+          borderColor: "var(--gd-border)",
+          background: "var(--gd-surface)",
+          boxShadow:
+            "var(--gd-panel-shadow)",
+        }}
       >
         <div
           className="w-40 shrink-0 border-r p-3 flex flex-col gap-0.5"
@@ -234,6 +431,28 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
+              </svg>
+            }
+          />
+          <NavItem
+            label="Imagine"
+            active={section === "imagine"}
+            onClick={() => setSection("imagine")}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M2.5 10.5 6 7l3 3 1.5-1.5 3 3" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+              </svg>
+            }
+          />
+          <NavItem
+            label="Agent"
+            active={section === "agent"}
+            onClick={() => setSection("agent")}
+            icon={
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2.5 3 5v6l5 2.5 5-2.5V5L8 2.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+                <path d="M8 8.5v5M3 5l5 3.5L13 5" stroke="currentColor" strokeWidth="1.2" />
               </svg>
             }
           />
@@ -278,10 +497,12 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
 
         <div className="flex-1 p-5 overflow-y-auto">
           {section === "general" && <GeneralSection ready={ready} />}
+          {section === "imagine" && <ImagineSection />}
+          {section === "agent" && <AgentSection />}
           {section === "memory" && <MemorySection onBrowse={handleBrowseMemory} />}
           {section === "about" && <AboutSection />}
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

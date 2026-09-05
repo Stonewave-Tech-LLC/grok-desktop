@@ -1,6 +1,15 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
+import type { ModelInfo, RemoteSessionStub } from "../lib/api";
+import { captureEpisodic, denyPermission, respondPermission } from "../lib/api";
+import { emitAcpTap } from "../lib/acpTap";
+import {
+  FALLBACK_MODES,
+  modeImpliesYolo,
+  type SessionControls,
+  type SessionMode,
+} from "../lib/sessionControls";
 
 // zustand's persist middleware writes on *every* set() call by default — fine
 // for occasional UI-toggle changes, but handleSessionUpdate calls set() once
@@ -119,6 +128,8 @@ export interface WorkflowRun {
   updatedAt: number;
 }
 
+export type ImagineAspect = "auto" | "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
+
 export interface ChatSession {
   id: string;
   cwd: string;
@@ -130,6 +141,10 @@ export interface ChatSession {
   activity: Record<string, ActivityItem>;
   activityOrder: string[];
   yolo: boolean;
+  modelId?: string;
+  modeId?: string;
+  availableModels?: ModelInfo["availableModels"];
+  availableModes?: SessionMode[];
   // Latest turn's total (input+output, includes cache reads) — a proxy for
   // "how full is the context window right now", not cumulative spend. Reset
   // by nothing; each turn just overwrites it.
@@ -185,17 +200,54 @@ interface SessionStoreState {
   // store. Composer consumes it via useEffect and clears it right after, so
   // it never persists or refires. Deliberately not persisted (see partialize).
   composerDraft?: string;
+  // Process-level model catalog from initialize `_meta.modelState`. A
+  // session's live selection is `ChatSession.modelId`; this is the fallback
+  // list so the picker still has names before session/new returns modes.
+  modelCatalog?: ModelInfo;
+  defaultYolo: boolean;
+  defaultModelId?: string;
+  imagineAutoOpen: boolean;
+  imagineDefaultAspect: ImagineAspect;
+  lastWorkspace?: string;
+  // Operator dream auto-trigger (copy-on-write candidate, never auto-attach).
+  // autoDream + lastOperatorDreamAt persist; due/running are this-process only.
+  autoDream: boolean;
+  lastOperatorDreamAt?: number;
+  operatorDreamDue: boolean;
+  operatorDreamRunning: boolean;
   // Sessions with a turn WE started this process (via appendUserMessage) and
   // haven't yet seen finalized (finalizeTurn / turn_completed). Deliberately
   // NOT persisted (see partialize below) — it exists only to stop a reattached
   // session's leftover/replayed chunks from resurrecting a "streaming" status
   // for a turn nobody in this run is actually waiting on. See handleSessionUpdate.
   activeTurnSessionIds: Set<string>;
+  // Sessions whose backend context has been (re)established this process —
+  // via `session/new` at creation time or `session/load` on reattach/select.
+  // Drives the slice-5 lazy-import behavior: a CLI-imported stub's timeline
+  // is empty until its first `session/load`, and this set is what stops that
+  // load from firing more than once per session per run. Deliberately NOT
+  // persisted (see partialize below) — it describes *this process's* live
+  // ACP connection, meaningless across a restart.
+  reattachedSessionIds: Set<string>;
 
   setReady: (ready: boolean) => void;
   setInitError: (msg: string) => void;
   setLastError: (msg?: string) => void;
-  registerSession: (id: string, cwd: string, yolo: boolean) => void;
+  registerSession: (id: string, cwd: string, yolo: boolean, modelId?: string) => void;
+  applySessionControls: (id: string, controls: SessionControls) => void;
+  setSessionModelLocal: (id: string, modelId: string) => void;
+  setSessionModeLocal: (id: string, modeId: string) => void;
+  setModelCatalog: (info: ModelInfo) => void;
+  setDefaultYolo: (v: boolean) => void;
+  setDefaultModelId: (id?: string) => void;
+  setImagineAutoOpen: (v: boolean) => void;
+  setImagineDefaultAspect: (v: ImagineAspect) => void;
+  setLastWorkspace: (cwd: string) => void;
+  setAutoDream: (v: boolean) => void;
+  markOperatorDreamDue: () => void;
+  clearOperatorDreamDue: () => void;
+  setOperatorDreamRunning: (v: boolean) => void;
+  setLastOperatorDreamAt: (ms: number) => void;
   setActiveSession: (id: string) => void;
   appendUserMessage: (sessionId: string, text: string) => void;
   handleAcpEvent: (event: AcpEvent) => void;
@@ -210,6 +262,14 @@ interface SessionStoreState {
   renameSession: (id: string, title: string) => void;
   deleteSession: (id: string) => void;
   finalizeTurn: (sessionId: string) => void;
+  markReattached: (sessionId: string) => void;
+  // Adds grok CLI sessions (from `list_sessions`) as empty-timeline stubs for
+  // any sessionId not already known locally — never overwrites an existing
+  // entry (this app's own persisted history always wins). Appended after the
+  // existing sessionOrder rather than interleaved by recency: this app's own
+  // sessions are already ordered by creation (LIFO, see registerSession), and
+  // grok's `updatedAt` isn't a comparable creation timestamp to sort against.
+  mergeRemoteSessions: (remote: RemoteSessionStub[]) => void;
 }
 
 function uid(): string {
@@ -263,8 +323,15 @@ export const useSessionStore = create<SessionStoreState>()(
   diffsAutoExpand: false,
   debugLog: [],
   activeTurnSessionIds: new Set(),
+  reattachedSessionIds: new Set(),
   memoryEnabled: false,
   memoryActiveThisRun: false,
+  defaultYolo: false,
+  imagineAutoOpen: true,
+  imagineDefaultAspect: "auto",
+  autoDream: true,
+  operatorDreamDue: false,
+  operatorDreamRunning: false,
 
   setReady: (ready) => set({ ready }),
   setInitError: (msg) => set({ initError: msg }),
@@ -273,8 +340,19 @@ export const useSessionStore = create<SessionStoreState>()(
   setMemoryActiveThisRun: (v) => set({ memoryActiveThisRun: v }),
   setMemoryStatusMessage: (msg) => set({ memoryStatusMessage: msg }),
   setComposerDraft: (text) => set({ composerDraft: text }),
+  setModelCatalog: (info) => set({ modelCatalog: info }),
+  setDefaultYolo: (v) => set({ defaultYolo: v }),
+  setDefaultModelId: (id) => set({ defaultModelId: id }),
+  setImagineAutoOpen: (v) => set({ imagineAutoOpen: v }),
+  setImagineDefaultAspect: (v) => set({ imagineDefaultAspect: v }),
+  setLastWorkspace: (cwd) => set({ lastWorkspace: cwd }),
+  setAutoDream: (v) => set({ autoDream: v }),
+  markOperatorDreamDue: () => set({ operatorDreamDue: true }),
+  clearOperatorDreamDue: () => set({ operatorDreamDue: false }),
+  setOperatorDreamRunning: (v) => set({ operatorDreamRunning: v }),
+  setLastOperatorDreamAt: (ms) => set({ lastOperatorDreamAt: ms }),
 
-  registerSession: (id, cwd, yolo) =>
+  registerSession: (id, cwd, yolo, modelId) =>
     set((s) => ({
       sessions: {
         ...s.sessions,
@@ -289,6 +367,10 @@ export const useSessionStore = create<SessionStoreState>()(
           activity: {},
           activityOrder: [],
           yolo,
+          modelId,
+          modeId: yolo ? "bypassPermissions" : "default",
+          availableModes: FALLBACK_MODES,
+          availableModels: s.modelCatalog?.availableModels,
           tokensCumulative: 0,
           costCumulativeUsdTicks: 0,
           costEstimated: false,
@@ -298,7 +380,47 @@ export const useSessionStore = create<SessionStoreState>()(
       },
       sessionOrder: [id, ...s.sessionOrder],
       activeSessionId: id,
+      lastWorkspace: cwd,
     })),
+
+  applySessionControls: (id, controls) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      const modeId = controls.modeId ?? session.modeId;
+      return {
+        sessions: {
+          ...s.sessions,
+          [id]: {
+            ...session,
+            modelId: controls.modelId ?? session.modelId,
+            modeId,
+            availableModels: controls.availableModels ?? session.availableModels,
+            availableModes: controls.availableModes ?? session.availableModes ?? FALLBACK_MODES,
+            yolo: modeId ? modeImpliesYolo(modeId) : session.yolo,
+          },
+        },
+      };
+    }),
+
+  setSessionModelLocal: (id, modelId) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      return { sessions: { ...s.sessions, [id]: { ...session, modelId } } };
+    }),
+
+  setSessionModeLocal: (id, modeId) =>
+    set((s) => {
+      const session = s.sessions[id];
+      if (!session) return {};
+      return {
+        sessions: {
+          ...s.sessions,
+          [id]: { ...session, modeId, yolo: modeImpliesYolo(modeId) },
+        },
+      };
+    }),
 
   setActiveSession: (id) => set({ activeSessionId: id }),
 
@@ -329,6 +451,10 @@ export const useSessionStore = create<SessionStoreState>()(
     }),
 
   handleAcpEvent: (event) => {
+    // Fan out first so an out-of-band dream worker can collect chunks for
+    // a sessionId we deliberately never registered in the visible store.
+    emitAcpTap(event);
+
     if (event.kind === "stderr") {
       set((s) => ({ debugLog: [...s.debugLog.slice(-500), { ts: Date.now(), line: event.line }] }));
       return;
@@ -344,6 +470,26 @@ export const useSessionStore = create<SessionStoreState>()(
     if (event.kind === "incoming_request") {
       const params = asRecord(event.params);
       const sessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+      // Out-of-band dream workers are never registered in the visible store.
+      // If yolo didn't swallow the prompt, grant rather than hang the curator
+      // (and rather than surfacing a permission card on a session the user
+      // can't select).
+      if (sessionId && !useSessionStore.getState().sessions[sessionId]) {
+        const options = asArray(params.options);
+        let optionId = "allow-once";
+        for (const o of options) {
+          const rec = asRecord(o);
+          if (typeof rec.optionId !== "string") continue;
+          if (rec.kind === "allow_once" || rec.kind === "allow_always" || rec.optionId.includes("allow")) {
+            optionId = rec.optionId;
+            break;
+          }
+        }
+        respondPermission(event.id, optionId).catch(() => {
+          denyPermission(event.id).catch(() => {});
+        });
+        return;
+      }
       set((s) => ({
         pendingPermissions: [...s.pendingPermissions, { id: event.id, sessionId, method: event.method, params }],
       }));
@@ -384,6 +530,40 @@ export const useSessionStore = create<SessionStoreState>()(
       const sessionOrder = s.sessionOrder.filter((sid) => sid !== id);
       const activeSessionId = s.activeSessionId === id ? sessionOrder[0] : s.activeSessionId;
       return { sessions: rest, sessionOrder, activeSessionId };
+    }),
+
+  markReattached: (sessionId) =>
+    set((s) => ({ reattachedSessionIds: new Set(s.reattachedSessionIds).add(sessionId) })),
+
+  mergeRemoteSessions: (remote) =>
+    set((s) => {
+      const sessions = { ...s.sessions };
+      const additions: string[] = [];
+      for (const r of remote) {
+        if (sessions[r.sessionId]) continue;
+        sessions[r.sessionId] = {
+          id: r.sessionId,
+          cwd: r.cwd,
+          title: r.title || r.cwd.split("/").filter(Boolean).pop() || "Session",
+          createdAt: r.updatedAt ?? Date.now(),
+          timeline: [],
+          streamingText: "",
+          status: "idle",
+          activity: {},
+          activityOrder: [],
+          yolo: r.yolo,
+          modeId: r.yolo ? "bypassPermissions" : "default",
+          availableModes: FALLBACK_MODES,
+          tokensCumulative: 0,
+          costCumulativeUsdTicks: 0,
+          costEstimated: false,
+          workflows: {},
+          workflowOrder: [],
+        };
+        additions.push(r.sessionId);
+      }
+      if (additions.length === 0) return {};
+      return { sessions, sessionOrder: [...s.sessionOrder, ...additions] };
     }),
 
   // `session/prompt` resolving is the actual ACP signal that a turn ended — nothing
@@ -428,6 +608,14 @@ export const useSessionStore = create<SessionStoreState>()(
         ),
         sessionOrder: s.sessionOrder,
         activeSessionId: s.activeSessionId,
+        diffsAutoExpand: s.diffsAutoExpand,
+        defaultYolo: s.defaultYolo,
+        defaultModelId: s.defaultModelId,
+        imagineAutoOpen: s.imagineAutoOpen,
+        imagineDefaultAspect: s.imagineDefaultAspect,
+        lastWorkspace: s.lastWorkspace,
+        autoDream: s.autoDream,
+        lastOperatorDreamAt: s.lastOperatorDreamAt,
       }),
       // A restored session's status ("streaming"/"thinking") describes a turn
       // that died with the old process — without normalizing it here, the
@@ -445,6 +633,8 @@ export const useSessionStore = create<SessionStoreState>()(
             status: "idle",
             streamingText: "",
             yolo: session.yolo ?? false,
+            modeId: session.modeId ?? (session.yolo ? "bypassPermissions" : "default"),
+            availableModes: session.availableModes ?? FALLBACK_MODES,
             tokensCumulative: session.tokensCumulative ?? 0,
             costCumulativeUsdTicks: session.costCumulativeUsdTicks ?? 0,
             costEstimated: session.costEstimated ?? false,
@@ -474,6 +664,33 @@ function handleSessionUpdate(params: JsonValue, set: Setter) {
   // streamed text mid-message, fragmenting markdown that spans the flush
   // boundary (e.g. splitting a table in two). Drop them before they can
   // touch streamingText at all.
+  if (kind === "current_mode_update" || kind === "current_model_update") {
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      const modeId =
+        (typeof update.currentModeId === "string" && update.currentModeId) ||
+        (typeof update.modeId === "string" && update.modeId) ||
+        session.modeId;
+      const modelId =
+        (typeof update.currentModelId === "string" && update.currentModelId) ||
+        (typeof update.modelId === "string" && update.modelId) ||
+        session.modelId;
+      return {
+        sessions: {
+          ...s.sessions,
+          [sessionId]: {
+            ...session,
+            modeId,
+            modelId,
+            yolo: modeId ? modeImpliesYolo(modeId) : session.yolo,
+          },
+        },
+      };
+    });
+    return;
+  }
+
   if (SILENT_KINDS.has(kind)) return;
 
   set((s) => {
@@ -577,6 +794,23 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
   // they're handled before the sessionId-dependent branches below. No shared
   // ID between a `_started` and its matching `_completed`, so each one just
   // independently produces its own toast text rather than a spinner sequence.
+  //
+  // Operator memory hook (docs/OPERATOR_MEMORY.md, diamond 2): grok's own
+  // /flush and /dream already do the grading work — a `result`/`summary`
+  // text field here is genuinely already-distilled content, not a raw
+  // transcript. Promoting it into a durable, typed, bridged episodic entry
+  // is the entire curation trigger; nothing here asks the live coding
+  // session to save anything mid-turn. Best-effort (fire-and-forget) so a
+  // write failure never blocks the toast or anything else.
+  const promoteToEpisodic = (trigger: string) => {
+    const resultRaw = update.result ?? update.summary;
+    const result = typeof resultRaw === "string" ? resultRaw.trim() : "";
+    if (result.length < 20) return;
+    const cwd = useSessionStore.getState().sessions[sessionId]?.cwd;
+    if (!cwd) return;
+    captureEpisodic("project", trigger, result, cwd).catch(() => {});
+  };
+
   if (kind === "memory_flush_started") {
     set(() => ({ memoryStatusMessage: "Saving memory…" }));
     return;
@@ -584,14 +818,17 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
   if (kind === "memory_flush_completed") {
     const result = typeof update.result === "string" ? update.result : undefined;
     set(() => ({ memoryStatusMessage: result ? `Memory saved: ${result.slice(0, 80)}` : "Memory saved" }));
+    promoteToEpisodic("grok flush");
     return;
   }
   if (kind === "memory_dream_completed") {
-    set(() => ({ memoryStatusMessage: "Memory consolidated" }));
+    set(() => ({ memoryStatusMessage: "Memory consolidated", operatorDreamDue: true }));
+    promoteToEpisodic("grok dream");
     return;
   }
   if (kind === "memory_session_saved") {
     set(() => ({ memoryStatusMessage: "Session memory saved" }));
+    promoteToEpisodic("grok session save");
     return;
   }
 
@@ -703,6 +940,21 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
           [sessionId]: { ...session, workflows: { ...session.workflows, [runId]: run }, workflowOrder },
         },
       };
+    });
+    return;
+  }
+
+  if (kind === "model_changed") {
+    const modelId =
+      (typeof update.modelId === "string" && update.modelId) ||
+      (typeof update.model === "string" && update.model) ||
+      (typeof update.currentModelId === "string" && update.currentModelId) ||
+      undefined;
+    if (!modelId) return;
+    set((s) => {
+      const session = s.sessions[sessionId];
+      if (!session) return {};
+      return { sessions: { ...s.sessions, [sessionId]: { ...session, modelId } } };
     });
     return;
   }

@@ -1,4 +1,7 @@
 import { useEffect, useState } from "react";
+import { AnimatePresence } from "framer-motion";
+import { AmbientBackground } from "./components/AmbientBackground";
+import { AnvilSplash, type BootStatus } from "./components/AnvilSplash";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChatPane } from "./components/ChatPane";
@@ -10,6 +13,8 @@ import { useSessionStore } from "./store/sessions";
 import {
   newSession,
   loadSession,
+  listSessions,
+  mcpCapabilities,
   sendPrompt,
   cancelPrompt,
   checkAuth,
@@ -17,18 +22,30 @@ import {
   onAcpEvent,
   getMemoryEnabled,
   memoryRuntimeStatus,
+  currentModelInfo,
+  setSessionModel,
 } from "./lib/api";
+import { parseSessionControls } from "./lib/sessionControls";
+import {
+  AUTO_DREAM_MIN_EPISODICS,
+  AUTO_DREAM_MIN_MS,
+  hasPendingDream,
+  runOperatorDream,
+  uniqueEpisodicCount,
+} from "./lib/dream";
 import { MemoryToast } from "./components/MemoryToast";
+import { EmptyCanvas } from "./components/EmptyCanvas";
 
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
   const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
-
-  useEffect(() => {
-    checkAuth()
-      .then((ok) => setAuthState(ok ? "authenticated" : "unauthenticated"))
-      .catch(() => setAuthState("unauthenticated"));
-  }, []);
+  // Drives the AnvilSplash overlay. Deliberately separate from the store's
+  // `ready` flag: `ready` only ever meant "the ACP connection answered
+  // init_status", which several other bits of UI (Composer, Sidebar's status
+  // dot) already key off of and shouldn't have to wait on session import too.
+  const [bootStatus, setBootStatus] = useState<BootStatus>("initializing");
+  const [bootError, setBootError] = useState<string | undefined>(undefined);
+  const [bootAttempt, setBootAttempt] = useState(0);
 
   useEffect(() => {
     getMemoryEnabled().then(setMemoryEnabled).catch(() => {});
@@ -42,9 +59,11 @@ export default function App() {
     setInitError,
     handleAcpEvent,
     sessions,
-    sessionOrder,
     activeSessionId,
     registerSession,
+    applySessionControls,
+    setSessionModelLocal,
+    setModelCatalog,
     appendUserMessage,
     pendingPermissions,
     activityDockOpen,
@@ -59,6 +78,17 @@ export default function App() {
     memoryActiveThisRun,
     setMemoryEnabled,
     setMemoryActiveThisRun,
+    setMemoryStatusMessage,
+    reattachedSessionIds,
+    markReattached,
+    mergeRemoteSessions,
+    autoDream,
+    operatorDreamDue,
+    operatorDreamRunning,
+    lastOperatorDreamAt,
+    clearOperatorDreamDue,
+    setOperatorDreamRunning,
+    setLastOperatorDreamAt,
   } = useSessionStore();
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
@@ -76,65 +106,205 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityCount]);
 
+  // The onAcpEvent listener has to be live before anything else below can
+  // possibly matter (a stream event could arrive the instant init_status
+  // resolves), so it's registered unconditionally on mount, independent of
+  // the boot sequence's own retries.
   useEffect(() => {
     const unlisten = onAcpEvent((e) => handleAcpEvent(e));
-    // A command (request/response), not a "ready" event — correct regardless of
-    // how fast this effect happens to run relative to the Rust side finishing
-    // its (near-instant) initialize handshake. See src-tauri's state.rs/lib.rs.
-    initStatus()
-      .then(() => setReady(true))
-      .catch((err) => setInitError(String(err)));
     return () => {
       unlisten.then((fn) => fn());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sessions from a previous app run are restored into the store by the
-  // persist middleware already (their timeline/messages included) — but the
-  // *backend* needs a fresh reattach per session before it'll accept new
-  // prompts for it, since grok's process restarted along with ours.
-  //
-  // A reattach failure here used to delete the session outright — but that
-  // silently destroyed real conversation history on what can easily be a
-  // transient failure (a timing race right after the session was created, a
-  // momentary backend hiccup), not proof the session is actually gone. Keep
-  // the session and its history visible either way; only surface the error,
-  // so sending a *new* message is what tells the user something's actually
-  // wrong (via the existing setLastError path in handleSend) — deleting a
-  // dead session is still one click away if it truly never reconnects.
+  // Slice 5's boot sequence: everything the splash holds for lives here in
+  // one place instead of several independent effects racing each other —
+  // init_status + check_auth (parallel, neither should block the other),
+  // then list_sessions's merge, then reattaching *only* the session that was
+  // last active (not the whole persisted history — see the on-select effect
+  // below for the rest). `bootAttempt` is the retry hook for the splash's
+  // failure state.
   useEffect(() => {
-    if (!ready) return;
+    let cancelled = false;
+    setBootStatus("initializing");
+    setBootError(undefined);
+
+    // Each phase is shown at least this long so the wordmark/heat-scan actually
+    // reads on a fast local boot (otherwise the overlay is gone in <300ms).
+    const dwell = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const PHASE_MS = 900;
+
+    (async () => {
+      // A command (request/response), not a "ready" event — correct
+      // regardless of how fast this effect happens to run relative to the
+      // Rust side finishing its (near-instant) initialize handshake. See
+      // src-tauri's state.rs/lib.rs. This is the one call whose failure is
+      // actually fatal to the app being usable at all — checkAuth failing
+      // just means "assume unauthenticated, the onboarding screen after the
+      // splash handles it", so it's swallowed rather than propagated.
+      const [authOk] = await Promise.all([checkAuth().catch(() => false), initStatus(), dwell(PHASE_MS)]);
+      if (cancelled) return;
+      setAuthState(authOk ? "authenticated" : "unauthenticated");
+      setReady(true);
+
+      // Slice 2 MCP probe: just logged for now, not used to gate anything —
+      // stdio (what the probe server below uses) has no capability flag at
+      // all, it's spec-mandatory regardless of what this reports.
+      mcpCapabilities()
+        .then((caps) => console.log("[Anvil] grok-build MCP capabilities:", caps, "(stdio is spec-mandatory regardless)"))
+        .catch((err) => console.warn("[Anvil] couldn't read MCP capabilities:", err));
+      currentModelInfo()
+        .then(setModelCatalog)
+        .catch((err) => console.warn("[Anvil] couldn't read model catalog:", err));
+
+      setBootStatus("importing");
+      // grok's own on-disk session history can be large; a failure here
+      // (unsupported CLI version, transient RPC error) shouldn't block the
+      // app on local-only sessions still being fully usable.
+      const [remote] = await Promise.all([listSessions().catch(() => []), dwell(PHASE_MS)]);
+      if (cancelled) return;
+      mergeRemoteSessions(remote);
+
+      setBootStatus("reattaching");
+      const active = useSessionStore.getState().activeSessionId;
+      const sessionToReattach = active ? useSessionStore.getState().sessions[active] : undefined;
+      const reattach = (async () => {
+        if (active && sessionToReattach && !useSessionStore.getState().reattachedSessionIds.has(active)) {
+          try {
+            const raw = await loadSession(active, sessionToReattach.cwd);
+            applySessionControls(active, parseSessionControls(raw));
+            markReattached(active);
+          } catch (err) {
+            setLastError(`Couldn't reconnect "${sessionToReattach.title}": ${String(err)}`);
+          }
+        }
+      })();
+      await Promise.all([reattach, dwell(PHASE_MS)]);
+      if (cancelled) return;
+      setBootStatus("ready");
+    })().catch((err) => {
+      if (cancelled) return;
+      setInitError(String(err));
+      setBootStatus("error");
+      setBootError(String(err));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // Only the retry button (bootAttempt) should ever re-run this — it's a
+    // one-shot sequence otherwise, not something that reacts to store state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootAttempt]);
+
+  // Any *other* persisted session becomes reattached lazily, on first select
+  // — not during the splash (a CLI-imported history can be hundreds of
+  // sessions; loading every stub's transcript up front is the exact "118MB
+  // JSONL" cost Forge already avoided, see SLICE5.md). `reattachedSessionIds`
+  // is what makes this idempotent per session per run — new sessions are
+  // marked reattached at creation time (handleCreateSession) since
+  // `session/new` already established their backend context.
+  useEffect(() => {
+    if (bootStatus !== "ready" || !activeSessionId) return;
+    if (reattachedSessionIds.has(activeSessionId)) return;
+    const session = sessions[activeSessionId];
+    if (!session) return;
     let cancelled = false;
     (async () => {
-      for (const id of sessionOrder) {
-        const session = sessions[id];
-        if (!session) continue;
-        try {
-          await loadSession(id, session.cwd);
-        } catch (err) {
-          if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
+      try {
+        const raw = await loadSession(activeSessionId, session.cwd);
+        if (!cancelled) {
+          applySessionControls(activeSessionId, parseSessionControls(raw));
+          markReattached(activeSessionId);
         }
+      } catch (err) {
+        if (!cancelled) setLastError(`Couldn't reconnect "${session.title}": ${String(err)}`);
       }
     })();
     return () => {
       cancelled = true;
     };
-    // Only re-run when the connection just became ready, not on every
-    // session list change — reattaching already-loaded sessions again would
-    // be redundant work, not incorrect, but there's no reason to.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
+  }, [activeSessionId, bootStatus]);
 
-  async function handleCreateSession(cwd: string, yolo: boolean) {
+  async function handleCreateSession(cwd: string, yolo: boolean, modelId?: string) {
     setNewSessionDialogOpen(false);
     try {
-      const { sessionId } = await newSession(cwd, yolo);
-      registerSession(sessionId, cwd, yolo);
+      const { sessionId, raw } = await newSession(cwd, yolo, modelId);
+      registerSession(sessionId, cwd, yolo, modelId);
+      applySessionControls(sessionId, parseSessionControls(raw));
+      // `session/new` already established this session's backend context —
+      // the lazy on-select reattach effect would otherwise redundantly
+      // `session/load` it the moment it becomes active (which it does,
+      // immediately, via registerSession).
+      markReattached(sessionId);
+      // `_meta.modelId` on session/new is best-effort. If grok ignored it,
+      // follow up with the dedicated ACP method so the picker isn't a lie.
+      if (modelId) {
+        const applied = useSessionStore.getState().sessions[sessionId]?.modelId;
+        if (applied !== modelId) {
+          try {
+            await setSessionModel(sessionId, modelId);
+            setSessionModelLocal(sessionId, modelId);
+          } catch (err) {
+            setLastError(`Session started, but model switch failed: ${String(err)}`);
+          }
+        }
+      }
     } catch (err) {
       setLastError(`Couldn't start a session: ${String(err)}`);
     }
   }
+
+  // Auto operator-dream: grok's own /dream (or 5 unique episodics + 24h)
+  // marks us due; we only fire when the session is idle, and we never attach
+  // — a pending candidate is the whole point (review in the Memory cockpit).
+  useEffect(() => {
+    if (!autoDream || !ready || !activeSessionId || !activeSession) return;
+    if (activeSession.status !== "idle") return;
+    if (operatorDreamRunning) return;
+    if (pendingPermissions.some((p) => !p.sessionId || p.sessionId === activeSessionId)) return;
+    const cwd = activeSession.cwd;
+    const sessionId = activeSessionId;
+    let cancelled = false;
+    (async () => {
+      if (await hasPendingDream(cwd)) {
+        if (!cancelled && operatorDreamDue) {
+          clearOperatorDreamDue();
+          openDockTab("memory");
+        }
+        return;
+      }
+      let due = operatorDreamDue;
+      if (!due) {
+        const last = lastOperatorDreamAt ?? 0;
+        if (Date.now() - last < AUTO_DREAM_MIN_MS) return;
+        const n = await uniqueEpisodicCount(cwd);
+        due = n >= AUTO_DREAM_MIN_EPISODICS;
+      }
+      if (!due || cancelled) return;
+      setOperatorDreamRunning(true);
+      clearOperatorDreamDue();
+      try {
+        const ok = await runOperatorDream(sessionId, cwd);
+        if (cancelled) return;
+        setLastOperatorDreamAt(Date.now());
+        if (ok) {
+          setMemoryStatusMessage("Dream ready for review");
+          openDockTab("memory");
+        }
+      } catch (err) {
+        if (!cancelled) setLastError(`Auto-dream failed: ${String(err)}`);
+      } finally {
+        if (!cancelled) setOperatorDreamRunning(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDream, ready, activeSessionId, activeSession?.status, operatorDreamDue, pendingPermissions.length]);
 
   async function handleSend(text: string) {
     if (!activeSessionId) return;
@@ -166,8 +336,70 @@ export default function App() {
   );
 
   return (
-    <div className="h-full flex flex-col" style={{ background: "var(--gd-bg)" }}>
-      <TitleBar title={activeSession ? activeSession.title : "Grok Desktop"} />
+    <div className="h-full flex flex-col relative" style={{ background: "var(--gd-bg)" }}>
+      <AmbientBackground />
+      <div className="relative z-10 h-full flex flex-col min-h-0">
+      <TitleBar
+        title={activeSession ? activeSession.title : "Anvil"}
+        extra={
+          activeSession && (
+            <>
+              <button
+                onClick={toggleDiffsAutoExpand}
+                title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
+                className={"gd-panel-tab" + (diffsAutoExpand ? " active" : "")}
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                  <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                  <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                </svg>
+                Diffs
+              </button>
+              <button
+                onClick={() => openDockTab("activity")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "activity" ? " active" : "")}
+              >
+                Activity
+                {activityCount > 0 && (
+                  <span
+                    className="h-3.5 min-w-3.5 px-0.5 rounded-full text-[9px] leading-3.5 font-semibold text-center"
+                    style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+                  >
+                    {activityCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => openDockTab("workflows")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "workflows" ? " active" : "")}
+              >
+                Workflows
+                {activeWorkflowCount > 0 && (
+                  <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: "var(--gd-warning)" }} />
+                )}
+              </button>
+              <button
+                onClick={() => openDockTab("assets")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "assets" ? " active" : "")}
+              >
+                Studio
+              </button>
+              {/* Always rendered now (was gated on memoryActiveThisRun) so the
+                  right edge doesn't jump depending on whether memory happens
+                  to be on this run — just dim/disabled when it's off. */}
+              <button
+                onClick={() => openDockTab("memory")}
+                disabled={!memoryActiveThisRun}
+                title={memoryActiveThisRun ? undefined : "Memory is off for this session"}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "memory" ? " active" : "")}
+              >
+                Memory
+              </button>
+            </>
+          )
+        }
+      />
       {lastError && (
         <div
           className="px-4 py-2 text-[12px] flex items-center justify-between"
@@ -195,117 +427,6 @@ export default function App() {
               {activeSession ? (
                 <>
                   <div className="flex-1 flex flex-col min-h-0">
-                    <div
-                      className="h-9 shrink-0 flex items-center justify-end px-2.5 border-b gap-1"
-                      style={{ borderColor: "var(--gd-border)" }}
-                    >
-                      <button
-                        onClick={toggleDiffsAutoExpand}
-                        aria-label="Show all diffs"
-                        title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
-                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: diffsAutoExpand ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: diffsAutoExpand ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                          <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                          <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => openDockTab("activity")}
-                        aria-label="Activity"
-                        title="Activity"
-                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "activity" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "activity" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <path
-                            d="M1.5 8.5h2.5l1.5-4 2 7 1.5-5 1 2H14.5"
-                            stroke="currentColor"
-                            strokeWidth="1.3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        {activityCount > 0 && (
-                          <span
-                            className="absolute -top-1 -right-1 h-3.5 min-w-3.5 px-0.5 rounded-full text-[9px] leading-3.5 font-semibold"
-                            style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
-                          >
-                            {activityCount}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => openDockTab("workflows")}
-                        aria-label="Workflows"
-                        title="Workflows"
-                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <circle cx="3" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="3" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="12.5" cy="8" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <path d="M4.4 4.6 11 7.4M4.4 11.4 11 8.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                        </svg>
-                        {activeWorkflowCount > 0 && (
-                          <span
-                            className="absolute -top-1 -right-1 h-2 w-2 rounded-full animate-pulse"
-                            style={{ background: "var(--gd-warning)" }}
-                          />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => openDockTab("assets")}
-                        aria-label="Assets"
-                        title="Assets"
-                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "assets" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "assets" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <rect x="1.5" y="2.5" width="13" height="11" rx="1.3" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="5.2" cy="6" r="1.2" stroke="currentColor" strokeWidth="1.1" />
-                          <path d="M2 11.5 6 8l2.5 2 2.5-3 3 3.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                      {memoryActiveThisRun && (
-                        <button
-                          onClick={() => openDockTab("memory")}
-                          aria-label="Memory"
-                          title="Memory"
-                          className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                          style={{
-                            color: activityDockOpen && dockTab === "memory" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                            background: activityDockOpen && dockTab === "memory" ? "var(--gd-accent-soft)" : "transparent",
-                          }}
-                        >
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                            <path
-                              d="M8 1.5c-2 0-3.5 1.5-3.5 3.3 0 1 .4 1.7 1 2.3-.7.5-1.2 1.3-1.2 2.4 0 1.8 1.5 3 3.2 3h.5c1.7 0 3.2-1.2 3.2-3 0-1.1-.5-1.9-1.2-2.4.6-.6 1-1.3 1-2.3C11 3 9.5 1.5 7.5 1.5"
-                              stroke="currentColor"
-                              strokeWidth="1.2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path d="M8 5.2v7.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
                     <ChatPane session={activeSession} permissions={activePermissions} />
                     <Composer
                       disabled={!ready}
@@ -318,35 +439,35 @@ export default function App() {
                       onCancel={handleCancel}
                     />
                   </div>
-                  {activityDockOpen && <InsightsDock sessionId={activeSessionId} />}
+                  <AnimatePresence>
+                    {activityDockOpen && <InsightsDock sessionId={activeSessionId} />}
+                  </AnimatePresence>
                 </>
               ) : (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center max-w-sm">
-                    <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
-                      Grok Desktop
-                    </div>
-                    <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
-                      {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
-                    </div>
-                    <button
-                      onClick={() => setNewSessionDialogOpen(true)}
-                      disabled={!ready}
-                      className="gd-billet rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
-                    >
-                      New Session
-                    </button>
-                  </div>
+                <div className="flex-1 min-h-0 relative">
+                  <EmptyCanvas
+                    kind="no-session"
+                    onNewSession={() => setNewSessionDialogOpen(true)}
+                    newSessionDisabled={!ready}
+                  />
                 </div>
               )}
             </div>
           </>
         )}
       </div>
-      {newSessionDialogOpen && (
-        <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
-      )}
+      <AnimatePresence>
+        {newSessionDialogOpen && (
+          <NewSessionDialog onCreate={handleCreateSession} onClose={() => setNewSessionDialogOpen(false)} />
+        )}
+      </AnimatePresence>
       <MemoryToast />
+      <AnvilSplash
+        status={bootStatus}
+        errorMessage={bootError}
+        onRetry={() => setBootAttempt((n) => n + 1)}
+      />
+      </div>
     </div>
   );
 }

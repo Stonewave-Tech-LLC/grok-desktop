@@ -7,21 +7,90 @@ export async function defaultCwd(): Promise<string> {
   return invoke("default_cwd");
 }
 
-export async function newSession(cwd: string, yolo = false): Promise<{ sessionId: string }> {
-  const result = (await invoke("new_session", { cwd, yolo })) as JsonValue;
-  const sessionId = (result as Record<string, JsonValue>)?.sessionId;
-  if (typeof sessionId !== "string") {
+export async function newSession(
+  cwd: string,
+  yolo = false,
+  modelId?: string,
+): Promise<{ sessionId: string; raw: JsonValue }> {
+  const result = (await invoke("new_session", { cwd, yolo, modelId })) as JsonValue;
+  const rec = asObj(result);
+  const fromRoot = typeof rec.sessionId === "string" ? rec.sessionId : undefined;
+  const fromMeta = typeof asObj(rec._meta).sessionId === "string" ? String(asObj(rec._meta).sessionId) : undefined;
+  const sessionId = fromRoot ?? fromMeta;
+  if (!sessionId) {
     throw new Error(`session/new did not return a sessionId: ${JSON.stringify(result)}`);
   }
-  return { sessionId };
+  return { sessionId, raw: result };
 }
 
 /// Reattaches a session created in a previous app run so new prompts continue
 /// the same backend context (grok persists sessions to disk independent of
 /// which process created them). Doesn't replay old messages — those are
 /// restored from our own persisted store state instead.
-export async function loadSession(sessionId: string, cwd: string): Promise<void> {
-  await invoke("load_session", { sessionId, cwd });
+export async function loadSession(sessionId: string, cwd: string): Promise<JsonValue> {
+  return invoke("load_session", { sessionId, cwd });
+}
+
+export interface RemoteSessionStub {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: number;
+  yolo: boolean;
+}
+
+function asObj(v: JsonValue): Record<string, JsonValue> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, JsonValue>) : {};
+}
+
+/// ACP's `SessionInfo.updatedAt` (the real `session/list` result field,
+/// confirmed against the ACP schema) is an ISO-8601 string, not a number —
+/// the original slice-5 code guessed number and silently dropped every real
+/// value as a result (every imported session showed up as "now"). Accept a
+/// number too in case that ever changes, but string is the documented shape.
+function parseUpdatedAt(v: JsonValue): number | undefined {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const ms = Date.parse(v);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  return undefined;
+}
+
+/// Sessions grok has persisted independent of this app instance (e.g.
+/// started from the `grok` TUI) — via ACP `session/list` on the Rust side.
+/// Field lookup here is defensive (falls back across a few plausible key
+/// spellings) since the exact wire shape isn't confirmed from a live capture
+/// the way the rest of this file's commands are — see the comment on
+/// `list_sessions` in commands.rs. Entries missing a usable id/cwd are
+/// dropped rather than surfaced as broken stubs.
+export async function listSessions(): Promise<RemoteSessionStub[]> {
+  const raw = (await invoke("list_sessions")) as JsonValue;
+  const entries = Array.isArray(raw) ? raw : [];
+  const stubs: RemoteSessionStub[] = [];
+  for (const entry of entries) {
+    const rec = asObj(entry);
+    const sessionId = rec.sessionId ?? rec.session_id ?? rec.id;
+    const cwd = rec.cwd ?? rec.workingDirectory ?? rec.working_directory;
+    if (typeof sessionId !== "string" || typeof cwd !== "string") continue;
+    const title = rec.title ?? rec.name;
+    const updatedAtRaw = rec.updatedAt ?? rec.updated_at ?? rec.lastUpdated ?? rec.modifiedAt;
+    // ACP's SessionInfo has no standard yolo-mode field — `_meta` is the
+    // documented vendor-extensibility escape hatch, and `session/new` already
+    // sets yolo mode this same way (`params["_meta"] = { yoloMode: true }` in
+    // commands.rs). Only trust it if grok-build actually echoes it back under
+    // that exact key; default false rather than guess otherwise.
+    const meta = asObj(rec._meta);
+    const yolo = meta.yoloMode === true;
+    stubs.push({
+      sessionId,
+      cwd,
+      title: typeof title === "string" ? title : undefined,
+      updatedAt: parseUpdatedAt(updatedAtRaw),
+      yolo,
+    });
+  }
+  return stubs;
 }
 
 export async function sendPrompt(sessionId: string, text: string): Promise<JsonValue> {
@@ -76,6 +145,30 @@ export interface ModelInfo {
 
 export async function currentModelInfo(): Promise<ModelInfo> {
   return invoke("current_model_info");
+}
+
+export async function setSessionModel(sessionId: string, modelId: string): Promise<JsonValue> {
+  return invoke("set_session_model", { sessionId, modelId });
+}
+
+export async function setSessionMode(sessionId: string, modeId: string): Promise<JsonValue> {
+  return invoke("set_session_mode", { sessionId, modeId });
+}
+
+export interface McpCapabilities {
+  http: boolean;
+  sse: boolean;
+}
+
+/// The MCP transports grok-build actually advertised in `initialize` —
+/// stdio has no capability flag at all (it's spec-mandatory for every ACP
+/// agent unconditionally), so this only ever reports http/sse. Slice-2 probe
+/// support, not used to gate anything yet — just logged so it's on record
+/// what this grok-build install can actually do.
+export async function mcpCapabilities(): Promise<McpCapabilities> {
+  const raw = (await invoke("mcp_capabilities")) as JsonValue;
+  const rec = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, JsonValue>) : {};
+  return { http: rec.http === true, sse: rec.sse === true };
 }
 
 export async function pickFolder(defaultPath?: string): Promise<string | undefined> {
@@ -197,6 +290,114 @@ export async function writeAnvilEntry(
 
 export async function deleteAnvilEntry(path: string, cwd?: string): Promise<void> {
   await invoke("delete_anvil_entry", { path, cwd });
+}
+
+// ─────────────────────── Operator memory: project state card ───────────────────────
+// See docs/OPERATOR_MEMORY.md. `.anvil/memory/STATE.md`, the `## Aktueller
+// Zustand` pattern brought natively into Anvil — Focus / Last decided /
+// Open-Blockers, plus a last-commit line computed live from git (never
+// stored). Project-scoped only, no global equivalent.
+
+export interface StateCard {
+  focus: string;
+  lastDecided: string;
+  openBlockers: string;
+  updatedAtMs: number;
+  lastCommit?: string;
+}
+
+export async function readStateCard(cwd: string): Promise<StateCard> {
+  return invoke("read_state_card", { cwd });
+}
+
+export async function writeStateCard(cwd: string, focus: string, lastDecided: string, openBlockers: string): Promise<void> {
+  await invoke("write_state_card", { cwd, focus, lastDecided, openBlockers });
+}
+
+function episodicSlug(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `episodic-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/// Promotes an already-graded piece of text (grok's own `/flush`/`/dream`
+/// output, or the reply to an explicit "summarize this session" turn) into a
+/// durable, typed, bridged episodic entry. Deliberately reuses
+/// `writeAnvilEntry` unmodified — `type` was never restricted on the Rust
+/// side, only the manual-entry form's picker limits it to the original 6.
+/// This is the *only* way an "episodic" entry gets created — never exposed
+/// as a manual form option, see docs/OPERATOR_MEMORY.md diamond 2/3 for why
+/// (single writer, always something already graded, never a live mid-turn
+/// save-trivia tool).
+export async function captureEpisodic(
+  scope: MemoryEntryScope,
+  trigger: string,
+  summary: string,
+  cwd?: string
+): Promise<void> {
+  const text = summary.trim();
+  if (!text) return;
+  const firstLine = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? text.slice(0, 140);
+  const name = `Episodic — ${new Date().toLocaleString()} (${trigger})`;
+  const description = `${trigger} · ${firstLine.slice(0, 120)}`;
+  await writeAnvilEntry(scope, "episodic", episodicSlug(), name, description, text, undefined, cwd);
+}
+
+// ─────────────────────── Operator memory: dream (densify + learn) ───────────────────────
+// See docs/OPERATOR_MEMORY.md. Copy-on-write: a dream never touches the
+// live store — it writes a candidate under `.anvil/dream/`, reviewed here,
+// explicitly Attached or Discarded. Never auto-attached.
+
+export interface DreamStateCardInput {
+  focus?: string;
+  lastDecided?: string;
+  openBlockers?: string;
+}
+
+export interface DreamEpisodicInput {
+  name: string;
+  description: string;
+  body: string;
+  supersedes?: string[];
+}
+
+export interface DreamPlaybookInput {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface DreamCandidateInfo {
+  generatedAtMs: number;
+  summary: string;
+  status: "pending" | "attached" | "discarded";
+  supersededCount: number;
+  entries: MemoryEntryMeta[];
+  hasStateCardUpdate: boolean;
+  stateCard?: StateCard;
+}
+
+export async function writeDreamCandidate(
+  cwd: string,
+  stateCard: DreamStateCardInput | undefined,
+  episodics: DreamEpisodicInput[],
+  playbooks: DreamPlaybookInput[],
+  summary: string
+): Promise<void> {
+  await invoke("write_dream_candidate", { cwd, stateCard, episodics, playbooks, summary });
+}
+
+export async function readDreamCandidate(cwd: string): Promise<DreamCandidateInfo | undefined> {
+  const result = (await invoke("read_dream_candidate", { cwd })) as DreamCandidateInfo | null;
+  return result ?? undefined;
+}
+
+export async function attachDreamCandidate(cwd: string): Promise<void> {
+  await invoke("attach_dream_candidate", { cwd });
+}
+
+export async function discardDreamCandidate(cwd: string): Promise<void> {
+  await invoke("discard_dream_candidate", { cwd });
 }
 
 // ───────────────────────── Voice mode ─────────────────────────

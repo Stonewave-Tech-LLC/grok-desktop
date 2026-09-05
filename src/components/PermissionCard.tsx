@@ -50,9 +50,13 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
   }
 
   return (
+    // Slice 3: this used to be a yellow-bordered web-alert box — same
+    // decision, different clothes now. A metal panel (same depth token the
+    // dialogs already use) instead of a warning color reads as "the app's
+    // own chrome asking a question", not a browser permission popup.
     <div
       className="rounded-[var(--gd-radius-md)] border my-2 max-w-xl p-3"
-      style={{ borderColor: "var(--gd-warning)", background: "var(--gd-warning-soft)" }}
+      style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)", boxShadow: "var(--gd-panel-shadow)" }}
     >
       <div className="text-[13px] font-medium mb-2" style={{ color: "var(--gd-text)" }}>
         {title}
@@ -73,7 +77,6 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
       <div className="flex flex-wrap gap-2">
         {options.length > 0 ? (
           options.map((o) => {
-            const isReject = /reject|deny/i.test(o.optionId + (o.kind ?? ""));
             const isAllow = /allow/i.test(o.optionId + (o.kind ?? ""));
             return (
               <button
@@ -82,16 +85,7 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
                 className={
                   isAllow
                     ? "gd-billet text-[12px] font-semibold px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
-                    : "text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)] transition"
-                }
-                style={
-                  isAllow
-                    ? undefined
-                    : {
-                        background: "var(--gd-surface)",
-                        color: isReject ? "var(--gd-danger)" : "var(--gd-text)",
-                        border: "1px solid var(--gd-border-strong)",
-                      }
+                    : "gd-ghost text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
                 }
               >
                 {o.name ?? o.optionId}
@@ -106,11 +100,7 @@ export function PermissionCard({ permission, onResolved }: { permission: Pending
             >
               Allow once
             </button>
-            <button
-              onClick={deny}
-              className="text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)]"
-              style={{ background: "var(--gd-surface)", color: "var(--gd-danger)", border: "1px solid var(--gd-border-strong)" }}
-            >
+            <button onClick={deny} className="gd-ghost text-[12px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)]">
               Deny
             </button>
           </>

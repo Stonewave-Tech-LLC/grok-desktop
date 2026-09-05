@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { currentModelInfo, pickFiles, startVoice, stopVoice, onVoiceEvent, type ModelInfo } from "../lib/api";
+import { pickFiles, startVoice, stopVoice, onVoiceEvent, setSessionModel, setSessionMode } from "../lib/api";
 import { TokenUsagePopover } from "./TokenUsagePopover";
 import { useSessionStore } from "../store/sessions";
+import { FALLBACK_MODES, modeImpliesYolo } from "../lib/sessionControls";
 
 function relativizePath(absPath: string, cwd: string): string {
   const normCwd = cwd.endsWith("/") ? cwd : `${cwd}/`;
@@ -40,10 +41,25 @@ export function Composer({
   const [focused, setFocused] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
-  const [modelInfo, setModelInfo] = useState<ModelInfo | undefined>(undefined);
   const [listening, setListening] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    if (!modelOpen && !modeOpen) return;
+    function onDown(e: MouseEvent) {
+      if (menusRef.current && !menusRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+        setModeOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [modelOpen, modeOpen]);
   const [voiceLocale, setVoiceLocale] = useState<string | undefined>(undefined);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const menusRef = useRef<HTMLDivElement>(null);
   // Text already in the box when voice mode starts — live transcript updates
   // append after this instead of clobbering it, so starting voice mode with
   // a half-typed message doesn't just throw it away.
@@ -54,15 +70,14 @@ export function Composer({
   // bug; it just shouldn't be allowed to overwrite text the user has already
   // moved past.
   const listeningRef = useRef(false);
+  const imagineDefaultAspect = useSessionStore((s) => s.imagineDefaultAspect);
   const composerDraft = useSessionStore((s) => s.composerDraft);
   const setComposerDraft = useSessionStore((s) => s.setComposerDraft);
   const setLastError = useSessionStore((s) => s.setLastError);
-
-  useEffect(() => {
-    currentModelInfo()
-      .then(setModelInfo)
-      .catch(() => {});
-  }, []);
+  const session = useSessionStore((s) => s.sessions[sessionId]);
+  const modelCatalog = useSessionStore((s) => s.modelCatalog);
+  const setSessionModelLocal = useSessionStore((s) => s.setSessionModelLocal);
+  const setSessionModeLocal = useSessionStore((s) => s.setSessionModeLocal);
 
   // One-shot prefill from outside the composer (e.g. AssetsPanel's Regenerate
   // button) — consume it once, then clear it in the store so it can't refire
@@ -180,7 +195,41 @@ export function Composer({
     if (taRef.current) taRef.current.style.height = "auto";
   }
 
-  const model = modelInfo?.availableModels?.find((m) => m.modelId === modelInfo.currentModelId);
+  const models = session?.availableModels ?? modelCatalog?.availableModels ?? [];
+  const currentModelId = session?.modelId ?? modelCatalog?.currentModelId;
+  const model = models.find((m) => m.modelId === currentModelId) ?? models[0];
+  const modes = session?.availableModes?.length ? session.availableModes : FALLBACK_MODES;
+  const currentModeId = session?.modeId ?? (yolo ? "bypassPermissions" : "default");
+  const currentMode = modes.find((m) => m.id === currentModeId) ?? modes.find((m) => modeImpliesYolo(m.id) === yolo) ?? modes[0];
+
+  async function handleSetModel(modelId: string) {
+    setModelOpen(false);
+    if (!modelId || modelId === currentModelId) return;
+    setSwitching(true);
+    try {
+      await setSessionModel(sessionId, modelId);
+      setSessionModelLocal(sessionId, modelId);
+    } catch (err) {
+      setLastError(`Couldn't switch model: ${String(err)}`);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
+  async function handleSetMode(modeId: string) {
+    setModeOpen(false);
+    if (!modeId || modeId === currentModeId) return;
+    setSwitching(true);
+    try {
+      await setSessionMode(sessionId, modeId);
+      setSessionModeLocal(sessionId, modeId);
+    } catch (err) {
+      setLastError(`Couldn't switch mode: ${String(err)}`);
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   const totalContextTokens = model?._meta?.totalContextTokens;
   const tokenPct =
     typeof contextTokensUsed === "number" && typeof totalContextTokens === "number" && totalContextTokens > 0
@@ -189,7 +238,13 @@ export function Composer({
   const tokenColor = tokenPct !== undefined ? tokenBadgeColor(tokenPct) : undefined;
 
   return (
-    <div className="p-4 border-t" style={{ borderColor: "var(--gd-border)" }}>
+    // Slice 4: no border-t here — a hard line across only the main pane
+    // never met the sidebar's settings-footer line at the same Y (the
+    // "Trennlinien laufen nicht gemeinsam" bug). Site never has this
+    // T-junction either. The input box already reads as its own bordered
+    // card; this soft upward shadow just lifts it off the chat above
+    // without adding a second competing hairline.
+    <div ref={menusRef} className="p-4" style={{ boxShadow: "0 -16px 32px -16px rgba(0,0,0,0.35)" }}>
       <div className="max-w-4xl mx-auto flex items-end gap-2">
         {/* Left: attach / voice / mode — outside the input box */}
         <div className="flex flex-col gap-1 shrink-0 items-start">
@@ -242,19 +297,48 @@ export function Composer({
               </svg>
             </button>
           </div>
-          <div
-            title={
-              yolo
-                ? "Auto-accept was enabled when this session was created. Mode can't be changed mid-session yet."
-                : "Grok will ask before editing files or running commands. Mode can't be changed mid-session yet."
-            }
-            className="inline-flex items-center gap-1 h-5 px-1.5 rounded-full text-[10px] font-medium select-none"
-            style={{ color: "var(--gd-text-faint)", background: "var(--gd-metal-1)" }}
-          >
-            <svg width="9" height="9" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1.5 3 4v4c0 3.5 2.2 6 5 6.5 2.8-.5 5-3 5-6.5V4L8 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-            </svg>
-            {yolo ? "Auto-accept" : "Ask before edits"}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setModeOpen((o) => !o);
+                setModelOpen(false);
+              }}
+              disabled={disabled || switching}
+              title={currentMode?.description || "Permission mode"}
+              className="inline-flex items-center gap-1 h-5 px-1.5 rounded-full text-[10px] font-medium transition gd-glow-hover disabled:opacity-40"
+              style={{ color: "var(--gd-text-muted)", background: "var(--gd-metal-1)", border: "1px solid var(--gd-border)" }}
+            >
+              <svg width="9" height="9" viewBox="0 0 16 16" fill="none">
+                <path d="M8 1.5 3 4v4c0 3.5 2.2 6 5 6.5 2.8-.5 5-3 5-6.5V4L8 1.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+              </svg>
+              {currentMode?.name ?? (yolo ? "Always Allow" : "Ask")}
+              <span style={{ color: "var(--gd-text-faint)" }}>▾</span>
+            </button>
+            {modeOpen && (
+              <div
+                className="absolute bottom-7 left-0 z-30 min-w-[200px] rounded-[var(--gd-radius-md)] border py-1 gd-pop"
+                style={{ background: "var(--gd-surface)", borderColor: "var(--gd-border-strong)", boxShadow: "var(--gd-panel-shadow)" }}
+              >
+                {modes.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => handleSetMode(m.id)}
+                    className="w-full text-left px-3 py-1.5 text-[12px] gd-glow-hover-row"
+                    style={{
+                      color: m.id === currentModeId ? "var(--gd-text)" : "var(--gd-text-muted)",
+                      background: m.id === currentModeId ? "var(--gd-accent-soft)" : "transparent",
+                    }}
+                  >
+                    <div className="font-medium">{m.name}</div>
+                    {m.description && (
+                      <div className="text-[10.5px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+                        {m.description}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -282,7 +366,7 @@ export function Composer({
             <textarea
               ref={taRef}
               value={text}
-              placeholder="Message grok…"
+              placeholder={imagineDefaultAspect !== "auto" ? `Message grok… (${imagineDefaultAspect})` : "Message grok…"}
               disabled={disabled}
               onFocus={() => setFocused(true)}
               onBlur={() => setFocused(false)}
@@ -337,12 +421,40 @@ export function Composer({
         {/* Right: model + token usage — outside the input box */}
         <div className="flex flex-col gap-1 shrink-0 items-end">
           {model && (
-            <div
-              title="Active model"
-              className="h-6 px-2 rounded-full flex items-center text-[11px] font-medium"
-              style={{ background: "var(--gd-metal-1)", color: "var(--gd-text-muted)", border: "1px solid var(--gd-border)" }}
-            >
-              {model.name}
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setModelOpen((o) => !o);
+                  setModeOpen(false);
+                }}
+                disabled={disabled || switching || models.length === 0}
+                title="Switch model"
+                className="h-6 px-2 rounded-full flex items-center gap-1 text-[11px] font-medium gd-glow-hover disabled:opacity-40"
+                style={{ background: "var(--gd-metal-1)", color: "var(--gd-text-muted)", border: "1px solid var(--gd-border)" }}
+              >
+                {model.name}
+                {models.length > 1 && <span style={{ color: "var(--gd-text-faint)" }}>▾</span>}
+              </button>
+              {modelOpen && models.length > 0 && (
+                <div
+                  className="absolute bottom-8 right-0 z-30 min-w-[180px] rounded-[var(--gd-radius-md)] border py-1 gd-pop"
+                  style={{ background: "var(--gd-surface)", borderColor: "var(--gd-border-strong)", boxShadow: "var(--gd-panel-shadow)" }}
+                >
+                  {models.map((m) => (
+                    <button
+                      key={m.modelId}
+                      onClick={() => handleSetModel(m.modelId)}
+                      className="w-full text-left px-3 py-1.5 text-[12px] gd-glow-hover-row"
+                      style={{
+                        color: m.modelId === currentModelId ? "var(--gd-text)" : "var(--gd-text-muted)",
+                        background: m.modelId === currentModelId ? "var(--gd-accent-soft)" : "transparent",
+                      }}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {tokenPct !== undefined && (

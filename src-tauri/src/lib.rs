@@ -2,6 +2,7 @@ mod acp;
 mod auth;
 mod commands;
 mod grok_binary;
+mod mcp;
 mod memory;
 mod state;
 mod voice;
@@ -53,6 +54,9 @@ pub fn run() {
             if memory_active {
                 let _ = memory::write_agent_rules();
             }
+            // Unlike memory's rules file, graphify's isn't behind a toggle —
+            // see mcp.rs's module docs for why this one is unconditional.
+            let _ = mcp::write_agent_rules();
 
             let (process, init_result) = tauri::async_runtime::block_on(async {
                 let process = AcpProcess::spawn(&binary, &["agent", "stdio"], envs, on_event)?;
@@ -76,8 +80,12 @@ pub fn run() {
             commands::default_cwd,
             commands::init_status,
             commands::current_model_info,
+            commands::set_session_model,
+            commands::set_session_mode,
+            commands::mcp_capabilities,
             commands::new_session,
             commands::load_session,
+            commands::list_sessions,
             commands::send_prompt,
             commands::cancel_prompt,
             commands::respond_permission,
@@ -94,6 +102,12 @@ pub fn run() {
             memory::read_anvil_entry,
             memory::write_anvil_entry,
             memory::delete_anvil_entry,
+            memory::read_state_card,
+            memory::write_state_card,
+            memory::write_dream_candidate,
+            memory::read_dream_candidate,
+            memory::attach_dream_candidate,
+            memory::discard_dream_candidate,
             voice::start_voice,
             voice::stop_voice,
         ])
