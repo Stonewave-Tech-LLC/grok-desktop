@@ -140,6 +140,22 @@ export async function currentModelInfo(): Promise<ModelInfo> {
   return invoke("current_model_info");
 }
 
+export interface McpCapabilities {
+  http: boolean;
+  sse: boolean;
+}
+
+/// The MCP transports grok-build actually advertised in `initialize` —
+/// stdio has no capability flag at all (it's spec-mandatory for every ACP
+/// agent unconditionally), so this only ever reports http/sse. Slice-2 probe
+/// support, not used to gate anything yet — just logged so it's on record
+/// what this grok-build install can actually do.
+export async function mcpCapabilities(): Promise<McpCapabilities> {
+  const raw = (await invoke("mcp_capabilities")) as JsonValue;
+  const rec = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, JsonValue>) : {};
+  return { http: rec.http === true, sse: rec.sse === true };
+}
+
 export async function pickFolder(defaultPath?: string): Promise<string | undefined> {
   const result = await open({ directory: true, multiple: false, defaultPath });
   return typeof result === "string" ? result : undefined;

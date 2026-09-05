@@ -6,6 +6,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::mcp;
 use crate::state::GrokState;
 
 /// The frontend doesn't have a home directory concept of its own — resolve it here
@@ -42,6 +43,25 @@ pub fn current_model_info(state: State<'_, GrokState>) -> Result<Value, String> 
     Ok(model_state)
 }
 
+/// The MCP transport support grok-build actually advertised during
+/// `initialize` — read straight out of the already-cached init_result
+/// rather than a new RPC call, same pattern as `current_model_info`. Per
+/// the ACP schema, stdio transport has no corresponding capability flag at
+/// all (it's mandatory for every agent unconditionally); this only ever
+/// reports http/sse, defaulting both to false if the agent didn't mention
+/// `agentCapabilities.mcpCapabilities` at all — matching the schema's own
+/// documented default.
+#[tauri::command]
+pub fn mcp_capabilities(state: State<'_, GrokState>) -> Result<Value, String> {
+    let result = state.init_result.clone()?;
+    let caps = result
+        .get("agentCapabilities")
+        .and_then(|c| c.get("mcpCapabilities"))
+        .cloned()
+        .unwrap_or_else(|| json!({ "http": false, "sse": false }));
+    Ok(caps)
+}
+
 #[tauri::command]
 pub async fn new_session(
     state: State<'_, GrokState>,
@@ -50,7 +70,7 @@ pub async fn new_session(
 ) -> Result<Value, String> {
     let mut params = json!({
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp::probe_servers()?,
     });
     if yolo {
         params["_meta"] = json!({ "yoloMode": true });
@@ -79,7 +99,7 @@ pub async fn load_session(
     let params = json!({
         "sessionId": session_id,
         "cwd": cwd,
-        "mcpServers": [],
+        "mcpServers": mcp::probe_servers()?,
     });
     state
         .process

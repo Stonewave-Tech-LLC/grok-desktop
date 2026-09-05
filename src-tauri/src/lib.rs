@@ -2,6 +2,7 @@ mod acp;
 mod auth;
 mod commands;
 mod grok_binary;
+mod mcp;
 mod memory;
 mod state;
 mod voice;
@@ -76,6 +77,7 @@ pub fn run() {
             commands::default_cwd,
             commands::init_status,
             commands::current_model_info,
+            commands::mcp_capabilities,
             commands::new_session,
             commands::load_session,
             commands::list_sessions,

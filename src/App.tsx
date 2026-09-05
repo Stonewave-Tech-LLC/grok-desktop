@@ -14,6 +14,7 @@ import {
   newSession,
   loadSession,
   listSessions,
+  mcpCapabilities,
   sendPrompt,
   cancelPrompt,
   checkAuth,
@@ -125,6 +126,13 @@ export default function App() {
       if (cancelled) return;
       setAuthState(authOk ? "authenticated" : "unauthenticated");
       setReady(true);
+
+      // Slice 2 MCP probe: just logged for now, not used to gate anything —
+      // stdio (what the probe server below uses) has no capability flag at
+      // all, it's spec-mandatory regardless of what this reports.
+      mcpCapabilities()
+        .then((caps) => console.log("[Anvil] grok-build MCP capabilities:", caps, "(stdio is spec-mandatory regardless)"))
+        .catch((err) => console.warn("[Anvil] couldn't read MCP capabilities:", err));
 
       setBootStatus("importing");
       // grok's own on-disk session history can be large; a failure here
