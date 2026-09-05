@@ -423,7 +423,7 @@ export const useSessionStore = create<SessionStoreState>()(
           status: "idle",
           activity: {},
           activityOrder: [],
-          yolo: false,
+          yolo: r.yolo,
           tokensCumulative: 0,
           costCumulativeUsdTicks: 0,
           costEstimated: false,

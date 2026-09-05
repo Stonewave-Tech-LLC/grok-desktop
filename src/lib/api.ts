@@ -29,10 +29,25 @@ export interface RemoteSessionStub {
   cwd: string;
   title?: string;
   updatedAt?: number;
+  yolo: boolean;
 }
 
 function asObj(v: JsonValue): Record<string, JsonValue> {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, JsonValue>) : {};
+}
+
+/// ACP's `SessionInfo.updatedAt` (the real `session/list` result field,
+/// confirmed against the ACP schema) is an ISO-8601 string, not a number —
+/// the original slice-5 code guessed number and silently dropped every real
+/// value as a result (every imported session showed up as "now"). Accept a
+/// number too in case that ever changes, but string is the documented shape.
+function parseUpdatedAt(v: JsonValue): number | undefined {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const ms = Date.parse(v);
+    if (!Number.isNaN(ms)) return ms;
+  }
+  return undefined;
 }
 
 /// Sessions grok has persisted independent of this app instance (e.g.
@@ -52,12 +67,20 @@ export async function listSessions(): Promise<RemoteSessionStub[]> {
     const cwd = rec.cwd ?? rec.workingDirectory ?? rec.working_directory;
     if (typeof sessionId !== "string" || typeof cwd !== "string") continue;
     const title = rec.title ?? rec.name;
-    const updatedAt = rec.updatedAt ?? rec.updated_at ?? rec.lastUpdated ?? rec.modifiedAt;
+    const updatedAtRaw = rec.updatedAt ?? rec.updated_at ?? rec.lastUpdated ?? rec.modifiedAt;
+    // ACP's SessionInfo has no standard yolo-mode field — `_meta` is the
+    // documented vendor-extensibility escape hatch, and `session/new` already
+    // sets yolo mode this same way (`params["_meta"] = { yoloMode: true }` in
+    // commands.rs). Only trust it if grok-build actually echoes it back under
+    // that exact key; default false rather than guess otherwise.
+    const meta = asObj(rec._meta);
+    const yolo = meta.yoloMode === true;
     stubs.push({
       sessionId,
       cwd,
       title: typeof title === "string" ? title : undefined,
-      updatedAt: typeof updatedAt === "number" ? updatedAt : undefined,
+      updatedAt: parseUpdatedAt(updatedAtRaw),
+      yolo,
     });
   }
   return stubs;
