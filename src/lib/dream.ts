@@ -8,9 +8,12 @@
 // a crash or garbage in the store.
 import type { ChatSession } from "../store/sessions";
 import { useSessionStore } from "../store/sessions";
+import type { AcpEvent, JsonValue } from "../types/acp";
+import { tapAcpEvents } from "./acpTap";
 import type { StateCard, DreamStateCardInput, DreamEpisodicInput, DreamPlaybookInput } from "./api";
 import {
   listAnvilEntries,
+  newSession,
   readAnvilEntry,
   readDreamCandidate,
   readStateCard,
@@ -21,10 +24,14 @@ import {
 export const AUTO_DREAM_MIN_EPISODICS = 5;
 export const AUTO_DREAM_MIN_MS = 24 * 60 * 60 * 1000;
 
-export function buildDreamPrompt(stateCard: StateCard, episodics: { slug: string; name: string; body: string }[]): string {
+export function buildDreamPrompt(
+  stateCard: StateCard,
+  episodics: { slug: string; name: string; body: string }[],
+  thoughts?: string,
+): string {
   const lines: string[] = [
-    "Run an operator-memory dream for this workspace: densify and learn from the curated memory below.",
-    "You may also look at recent session transcripts on disk if it helps confirm a real recurring pattern — never invent one from a single occurrence.",
+    "You are an out-of-band operator-memory curator. This is not a user-facing chat.",
+    "Do not use tools. Do not search the filesystem. Densify and learn only from the material below.",
     "",
     "CURRENT STATE CARD:",
     `Focus: ${stateCard.focus || "—"}`,
@@ -33,18 +40,27 @@ export function buildDreamPrompt(stateCard: StateCard, episodics: { slug: string
     "",
     'EPISODIC ENTRIES (most recent first, "[slug]" is the id to reference in "supersedes"):',
     ...(episodics.length ? episodics.map((e) => `- [${e.slug}] ${e.name}\n  ${e.body.replace(/\n/g, "\n  ")}`) : ["(none yet)"]),
+  ];
+  if (thoughts && thoughts.trim()) {
+    lines.push(
+      "",
+      "THOUGHT TRACES from the live session (reasoning, NOT facts). Use only as evidence of recurring mistakes, converged workflows, or stated preferences. Never save a thought as an episodic or playbook on its own.",
+      thoughts.trim(),
+    );
+  }
+  lines.push(
     "",
     "Do this:",
-    '1. Densify: merge duplicate or overlapping episodic entries into fewer, clearer ones. Convert relative dates ("yesterday", "this morning") to absolute ones using today\'s real date. Drop anything that\'s genuinely one-off trivia not worth keeping (e.g. "opened Settings").',
-    "2. If something in the episodics is really a standing project fact now, not a point-in-time event, propose it as a state-card update instead of keeping it as an episodic.",
-    "3. Learn: only if you see a REAL recurring pattern across multiple episodics — a mistake that repeated, a workflow that converged, an operator preference stated more than once — propose a playbook entry. Never invent one from a single occurrence.",
+    '1. Densify: merge duplicate or overlapping episodic entries into fewer, clearer ones. Convert relative dates ("yesterday", "this morning") to absolute ones using today\'s real date. Drop one-off trivia (e.g. "opened Settings").',
+    "2. If something in the episodics is really a standing project fact now, propose it as a state-card update instead of keeping it as an episodic.",
+    "3. Learn: only if you see a REAL recurring pattern across multiple episodics (or a pattern the thought traces corroborate) — a mistake that repeated, a workflow that converged, an operator preference stated more than once — propose a playbook. Never invent one from a single occurrence.",
     "4. Never fabricate. If nothing meaningfully changed, say so and propose nothing.",
     "",
-    "Reply with a short human-readable rationale first, then end your reply with EXACTLY one fenced JSON block, valid JSON, matching this shape (omit fields you have nothing for using null or an empty array, but the block itself must always be present and parseable):",
+    "Reply with a short rationale first, then EXACTLY one fenced JSON block:",
     "```json",
     '{"stateCard": {"focus": "...", "lastDecided": "...", "openBlockers": "..."}, "episodics": [{"name": "...", "description": "...", "body": "...", "supersedes": ["<old-slug>"]}], "playbooks": [{"name": "...", "description": "...", "body": "..."}], "summary": "one line describing what this dream did"}',
     "```",
-  ];
+  );
   return lines.join("\n");
 }
 
@@ -145,25 +161,64 @@ function uniqueEpisodics<T extends { path: string; type: string }>(list: T[]): T
   return out;
 }
 
-/// Shared by the cockpit button and the idle auto-trigger. Writes a candidate
-/// only — never attaches. Returns true if a pending candidate is on disk.
-export async function runOperatorDream(sessionId: string, cwd: string): Promise<boolean> {
+function asRecord(v: JsonValue): Record<string, JsonValue> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, JsonValue>) : {};
+}
+
+function collectRecentThoughts(session: ChatSession | undefined, maxChars = 3500): string | undefined {
+  if (!session) return undefined;
+  const parts: string[] = [];
+  let used = 0;
+  for (let i = session.timeline.length - 1; i >= 0 && used < maxChars; i--) {
+    const item = session.timeline[i];
+    if (item.sessionUpdate !== "agent_thought_chunk") continue;
+    const content = asRecord(item.raw.content);
+    const text = typeof content.text === "string" ? content.text.trim() : "";
+    if (!text) continue;
+    const slice = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+    parts.push(slice);
+    used += slice.length;
+  }
+  if (!parts.length) return undefined;
+  return parts.reverse().join("\n---\n");
+}
+
+/// Shared by the cockpit button and the idle auto-trigger. Spawns a *throwaway*
+/// yolo ACP session so the live chat never sees the curator turn (Anthropic
+/// dreams are out-of-band; dumping this into the transcript was the bug).
+/// Writes a candidate only — never attaches. `parentSessionId` is only used
+/// to harvest thought traces as evidence, not as the prompt target.
+export async function runOperatorDream(parentSessionId: string, cwd: string): Promise<boolean> {
   const list = uniqueEpisodics(await listAnvilEntries(cwd).catch(() => []));
   const stateCard = await readStateCard(cwd);
   const episodicFull = await Promise.all(list.map((e) => readAnvilEntry(e.path)));
+  const parent = useSessionStore.getState().sessions[parentSessionId];
   const prompt = buildDreamPrompt(
     stateCard,
     episodicFull.map((e) => ({ slug: e.slug, name: e.name, body: e.body })),
+    collectRecentThoughts(parent),
   );
-  const store = useSessionStore.getState();
-  store.appendUserMessage(sessionId, prompt);
+
+  const { sessionId } = await newSession(cwd, true);
+  let reply = "";
+  const stopTap = tapAcpEvents((event: AcpEvent) => {
+    if (event.kind !== "notification" || event.method !== "session/update") return;
+    const params = asRecord(event.params);
+    if (params.sessionId !== sessionId) return;
+    const update = asRecord(params.update);
+    const kind = typeof update.sessionUpdate === "string" ? update.sessionUpdate : "";
+    if (kind !== "agent_message_chunk" && kind !== "agent_message_final") return;
+    const content = asRecord(update.content);
+    if (typeof content.text === "string") reply += content.text;
+    else if (typeof update.text === "string") reply += update.text;
+  });
+
   try {
     await sendPrompt(sessionId, prompt);
   } finally {
-    store.finalizeTurn(sessionId);
+    stopTap();
   }
-  const session = useSessionStore.getState().sessions[sessionId];
-  const reply = session ? extractDreamReplyText(session) : undefined;
+
   const parsed = reply ? parseDreamReply(reply) : undefined;
   if (!parsed) return false;
   await saveDreamCandidate(cwd, parsed);

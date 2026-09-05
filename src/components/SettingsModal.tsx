@@ -318,10 +318,11 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
       <div className="text-[11.5px] mt-3 leading-relaxed" style={{ color: "var(--gd-text-faint)" }}>
         Stores notes in <code>.anvil/memory/</code> (this project) and{" "}
         <code>~/.anvil/memory/</code> (global), and bridges them into grok's own memory so
-        they're recalled automatically in future sessions. Also seeds a small policy file
-        at <code>~/.grok/rules/</code> so grok actually searches memory proactively instead
-        of just having the tools without using them. Changes take effect after restarting
-        Anvil.
+        they're recalled automatically in future sessions. Semantic recall is grok's
+        index (FTS5, plus vectors if you set <code>[memory.embedding]</code> in{" "}
+        <code>~/.grok/config.toml</code>) — Anvil does not keep a second embedding
+        database. Also seeds <code>~/.grok/rules/</code> so grok searches proactively.
+        Changes take effect after restarting Anvil.
       </div>
       {memoryActiveThisRun && (
         <button

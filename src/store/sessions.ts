@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
 import type { ModelInfo, RemoteSessionStub } from "../lib/api";
-import { captureEpisodic } from "../lib/api";
+import { captureEpisodic, denyPermission, respondPermission } from "../lib/api";
+import { emitAcpTap } from "../lib/acpTap";
 import {
   FALLBACK_MODES,
   modeImpliesYolo,
@@ -450,6 +451,10 @@ export const useSessionStore = create<SessionStoreState>()(
     }),
 
   handleAcpEvent: (event) => {
+    // Fan out first so an out-of-band dream worker can collect chunks for
+    // a sessionId we deliberately never registered in the visible store.
+    emitAcpTap(event);
+
     if (event.kind === "stderr") {
       set((s) => ({ debugLog: [...s.debugLog.slice(-500), { ts: Date.now(), line: event.line }] }));
       return;
@@ -465,6 +470,26 @@ export const useSessionStore = create<SessionStoreState>()(
     if (event.kind === "incoming_request") {
       const params = asRecord(event.params);
       const sessionId = typeof params.sessionId === "string" ? params.sessionId : undefined;
+      // Out-of-band dream workers are never registered in the visible store.
+      // If yolo didn't swallow the prompt, grant rather than hang the curator
+      // (and rather than surfacing a permission card on a session the user
+      // can't select).
+      if (sessionId && !useSessionStore.getState().sessions[sessionId]) {
+        const options = asArray(params.options);
+        let optionId = "allow-once";
+        for (const o of options) {
+          const rec = asRecord(o);
+          if (typeof rec.optionId !== "string") continue;
+          if (rec.kind === "allow_once" || rec.kind === "allow_always" || rec.optionId.includes("allow")) {
+            optionId = rec.optionId;
+            break;
+          }
+        }
+        respondPermission(event.id, optionId).catch(() => {
+          denyPermission(event.id).catch(() => {});
+        });
+        return;
+      }
       set((s) => ({
         pendingPermissions: [...s.pendingPermissions, { id: event.id, sessionId, method: event.method, params }],
       }));

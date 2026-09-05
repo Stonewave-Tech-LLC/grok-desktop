@@ -411,6 +411,7 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
   const [capturing, setCapturing] = useState(false);
   const [dreaming, setDreaming] = useState(false);
   const [candidate, setCandidate] = useState<DreamCandidateInfo | undefined>(undefined);
+  const [query, setQuery] = useState("");
 
   async function refresh() {
     const list = await listAnvilEntries(cwd).catch(() => []);
@@ -470,7 +471,7 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
     setCapturing(true);
     try {
       const prompt =
-        "Summarize this session for operator memory: current focus in one line, what was decided, what's open or blocked. Plain bullet points, no fluff, nothing you haven't actually done or decided.";
+        "Do not use tools. Do not search the filesystem or memory. Reply only with a summary of THIS chat: current focus in one line, what was decided, what's open or blocked. Plain bullet points. Nothing you haven't actually done or decided in this conversation.";
       appendUserMessage(sessionId, prompt);
       try {
         await sendPrompt(sessionId, prompt);
@@ -522,12 +523,19 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
     setCandidate(undefined);
   }
 
+  const q = query.trim().toLowerCase();
+  const matches = (e: MemoryEntryMeta) =>
+    !q || `${e.name} ${e.description} ${e.type}`.toLowerCase().includes(q);
   const bodyEntries = entries.filter((e) => e.type !== "episodic" && e.type !== "playbook");
-  const projectEntries = bodyEntries.filter((e) => (PROJECT_TYPES as readonly string[]).includes(e.type));
-  const globalEntries = bodyEntries.filter((e) => (GLOBAL_TYPES as readonly string[]).includes(e.type));
-  const episodicEntries = entries.filter((e) => e.type === "episodic").sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
-  const playbookEntries = entries.filter((e) => e.type === "playbook").sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
-  const staleEntries = bodyEntries.filter(isStale);
+  const projectEntries = bodyEntries.filter((e) => (PROJECT_TYPES as readonly string[]).includes(e.type) && matches(e));
+  const globalEntries = bodyEntries.filter((e) => (GLOBAL_TYPES as readonly string[]).includes(e.type) && matches(e));
+  const episodicEntries = entries
+    .filter((e) => e.type === "episodic" && matches(e))
+    .sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
+  const playbookEntries = entries
+    .filter((e) => e.type === "playbook" && matches(e))
+    .sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
+  const staleEntries = bodyEntries.filter((e) => isStale(e) && matches(e));
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
@@ -556,6 +564,13 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
         />
       ) : (
         <div className="p-3 space-y-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search memory…"
+            className="w-full h-7 px-2.5 text-[12px] rounded-[var(--gd-radius-sm)] border outline-none"
+            style={{ background: "var(--gd-bg)", color: "var(--gd-text)", borderColor: "var(--gd-border)" }}
+          />
           {cwd && candidate && <DreamReviewPanel candidate={candidate} onAttach={handleAttachDream} onDiscard={handleDiscardDream} />}
 
           {cwd && (

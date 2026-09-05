@@ -99,10 +99,15 @@ memory as available whenever these tools exist.
   fall back to `memory_get` on `~/.grok/memory/MEMORY.md` (global) and the
   current workspace's `MEMORY.md`. An empty search result is not proof of
   empty memory.
-- Grok Desktop (Anvil) mirrors a separate, user-curated knowledge base into
-  these same files under an `<!-- anvil:memory:begin -->` block, grouped by
-  type (project/decision/issue/person/preference/reference) — read it like
-  any other memory content, it's just as trustworthy.
+- Grok Desktop (Anvil) mirrors a curated operator layer into these same
+  files under an `<!-- anvil:memory:begin -->` block (state card first,
+  then typed entries: project/decision/issue/person/preference/reference,
+  plus episodic captures and playbooks). Read it like any other memory
+  content — it's just as trustworthy.
+- Also read, when present: `<repo>/.anvil/memory/STATE.md` (focus / last
+  decided / open blockers) and the typed markdown files beside it. Forge
+  Grok on this Mac uses the same paths. Prefer `memory_search` / `memory_get`
+  first; fall back to those files if search is empty.
 - Prefer the memory tools over shelling out to `find`/`grep`/`sqlite3`
   against `~/.grok/memory/` to inspect it manually — that's for a human
   debugging the system, not the normal path to recall something.
@@ -684,11 +689,19 @@ fn regenerate_bridge_global(global_base_dir: &Path) -> Result<(), String> {
 #[tauri::command]
 pub fn list_anvil_entries(cwd: Option<String>) -> Result<Vec<MemoryEntryMeta>, String> {
     let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push_scope = |dir: std::path::PathBuf| {
+        let key = fs::canonicalize(&dir).unwrap_or(dir);
+        if !seen.insert(key.clone()) {
+            return;
+        }
+        out.extend(scan_scope(&key));
+    };
     if let Some(cwd) = &cwd {
-        out.extend(scan_scope(&anvil_project_dir(Path::new(cwd))));
+        push_scope(anvil_project_dir(Path::new(cwd)));
     }
     if let Some(global_dir) = anvil_global_dir() {
-        out.extend(scan_scope(&global_dir));
+        push_scope(global_dir);
     }
     Ok(out)
 }

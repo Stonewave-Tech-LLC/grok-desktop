@@ -240,21 +240,9 @@ surface, same shape Anvil itself reads and writes.
 
 ## Deliberately deferred (not this slice)
 
-- Semantic search of the curated layer itself (grok's own hybrid search
-  already covers recall once bridged — a second index would be the "fork a
-  store grok never reads" mistake).
-- Any Forge-side (Swift) change to make Forge Grok actually consult these
-  files — contract is documented above, implementation is Neo's call on
-  the Mac.
-- Causal graph UI (`caused_by`/`supersedes` as structured fields rather
-  than prose beyond the episodic `supersedes` list Dream already writes) —
-  add if/when it's actually load-bearing, not speculatively.
-- Auto-attach — explicitly gated on having seen a real dream that didn't
-  poison memory, not a speculative v2/v3 decision.
-- Global-scope dreaming (operator-wide playbooks like "Anvil metal, no
-  Forge cyan" that aren't tied to one workspace) and programmatic reading
-  of raw `~/.grok/sessions/**/chat_history.jsonl` transcripts — v2's dream
-  prompt tells the session it *may* look at recent transcripts itself
-  (it already has file tools; no new Rust JSONL parsing was built), and
-  scopes state-card/episodic output to the current project only. Broaden
-  when there's a real workspace-spanning pattern to learn from, not before.
+- A second embedding/sqlite store in Anvil. Semantic recall is grok's own
+  FTS5 (+ vec0 if `[memory.embedding]` is set). The cockpit search box is
+  keyword-only on the curated files.
+- Auto-attach — still gated on having seen a real dream that didn't poison.
+- Causal graph UI (`caused_by` as structured fields) — add when load-bearing.
+- Global-scope dreaming (operator-wide playbooks not tied to one workspace).
