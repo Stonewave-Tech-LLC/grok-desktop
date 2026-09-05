@@ -189,7 +189,13 @@ export function Composer({
   const tokenColor = tokenPct !== undefined ? tokenBadgeColor(tokenPct) : undefined;
 
   return (
-    <div className="p-4 border-t" style={{ borderColor: "var(--gd-border)" }}>
+    // Slice 4: no border-t here — a hard line across only the main pane
+    // never met the sidebar's settings-footer line at the same Y (the
+    // "Trennlinien laufen nicht gemeinsam" bug). Site never has this
+    // T-junction either. The input box already reads as its own bordered
+    // card; this soft upward shadow just lifts it off the chat above
+    // without adding a second competing hairline.
+    <div className="p-4" style={{ boxShadow: "0 -16px 32px -16px rgba(0,0,0,0.35)" }}>
       <div className="max-w-4xl mx-auto flex items-end gap-2">
         {/* Left: attach / voice / mode — outside the input box */}
         <div className="flex flex-col gap-1 shrink-0 items-start">

@@ -171,7 +171,68 @@ export default function App() {
     <div className="h-full flex flex-col relative" style={{ background: "var(--gd-bg)" }}>
       <AmbientBackground />
       <div className="relative z-10 h-full flex flex-col min-h-0">
-      <TitleBar title={activeSession ? activeSession.title : "Grok Desktop"} />
+      <TitleBar
+        title={activeSession ? activeSession.title : "Grok Desktop"}
+        extra={
+          activeSession && (
+            <>
+              <button
+                onClick={toggleDiffsAutoExpand}
+                aria-label="Show all diffs"
+                title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
+                className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
+                style={{
+                  color: diffsAutoExpand ? "var(--gd-accent)" : "var(--gd-text-muted)",
+                  background: diffsAutoExpand ? "var(--gd-accent-soft)" : "transparent",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                  <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                  <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
+                  <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                </svg>
+              </button>
+              <button
+                onClick={() => openDockTab("activity")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "activity" ? " active" : "")}
+              >
+                Activity
+                {activityCount > 0 && (
+                  <span
+                    className="h-3.5 min-w-3.5 px-0.5 rounded-full text-[9px] leading-3.5 font-semibold text-center"
+                    style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
+                  >
+                    {activityCount}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => openDockTab("workflows")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "workflows" ? " active" : "")}
+              >
+                Workflows
+                {activeWorkflowCount > 0 && (
+                  <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: "var(--gd-warning)" }} />
+                )}
+              </button>
+              <button
+                onClick={() => openDockTab("assets")}
+                className={"gd-panel-tab" + (activityDockOpen && dockTab === "assets" ? " active" : "")}
+              >
+                Assets
+              </button>
+              {memoryActiveThisRun && (
+                <button
+                  onClick={() => openDockTab("memory")}
+                  className={"gd-panel-tab" + (activityDockOpen && dockTab === "memory" ? " active" : "")}
+                >
+                  Memory
+                </button>
+              )}
+            </>
+          )
+        }
+      />
       {lastError && (
         <div
           className="px-4 py-2 text-[12px] flex items-center justify-between"
@@ -199,117 +260,6 @@ export default function App() {
               {activeSession ? (
                 <>
                   <div className="flex-1 flex flex-col min-h-0">
-                    <div
-                      className="h-9 shrink-0 flex items-center justify-end px-2.5 border-b gap-1"
-                      style={{ borderColor: "var(--gd-border)" }}
-                    >
-                      <button
-                        onClick={toggleDiffsAutoExpand}
-                        aria-label="Show all diffs"
-                        title={diffsAutoExpand ? "Collapse all diffs" : "Show all diffs"}
-                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: diffsAutoExpand ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: diffsAutoExpand ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <rect x="2" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                          <rect x="9" y="3" width="5" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" />
-                          <path d="M4.5 6v4M11.5 6v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => openDockTab("activity")}
-                        aria-label="Activity"
-                        title="Activity"
-                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "activity" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "activity" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <path
-                            d="M1.5 8.5h2.5l1.5-4 2 7 1.5-5 1 2H14.5"
-                            stroke="currentColor"
-                            strokeWidth="1.3"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                        {activityCount > 0 && (
-                          <span
-                            className="absolute -top-1 -right-1 h-3.5 min-w-3.5 px-0.5 rounded-full text-[9px] leading-3.5 font-semibold"
-                            style={{ background: "var(--gd-accent)", color: "var(--gd-accent-contrast)" }}
-                          >
-                            {activityCount}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        onClick={() => openDockTab("workflows")}
-                        aria-label="Workflows"
-                        title="Workflows"
-                        className="gd-glow-hover relative h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "workflows" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <circle cx="3" cy="4" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="3" cy="12" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="12.5" cy="8" r="1.6" stroke="currentColor" strokeWidth="1.2" />
-                          <path d="M4.4 4.6 11 7.4M4.4 11.4 11 8.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                        </svg>
-                        {activeWorkflowCount > 0 && (
-                          <span
-                            className="absolute -top-1 -right-1 h-2 w-2 rounded-full animate-pulse"
-                            style={{ background: "var(--gd-warning)" }}
-                          />
-                        )}
-                      </button>
-                      <button
-                        onClick={() => openDockTab("assets")}
-                        aria-label="Assets"
-                        title="Assets"
-                        className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                        style={{
-                          color: activityDockOpen && dockTab === "assets" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                          background: activityDockOpen && dockTab === "assets" ? "var(--gd-accent-soft)" : "transparent",
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                          <rect x="1.5" y="2.5" width="13" height="11" rx="1.3" stroke="currentColor" strokeWidth="1.2" />
-                          <circle cx="5.2" cy="6" r="1.2" stroke="currentColor" strokeWidth="1.1" />
-                          <path d="M2 11.5 6 8l2.5 2 2.5-3 3 3.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                      {memoryActiveThisRun && (
-                        <button
-                          onClick={() => openDockTab("memory")}
-                          aria-label="Memory"
-                          title="Memory"
-                          className="gd-glow-hover h-7 w-7 rounded-[var(--gd-radius-sm)] flex items-center justify-center transition border border-transparent"
-                          style={{
-                            color: activityDockOpen && dockTab === "memory" ? "var(--gd-accent)" : "var(--gd-text-muted)",
-                            background: activityDockOpen && dockTab === "memory" ? "var(--gd-accent-soft)" : "transparent",
-                          }}
-                        >
-                          <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-                            <path
-                              d="M8 1.5c-2 0-3.5 1.5-3.5 3.3 0 1 .4 1.7 1 2.3-.7.5-1.2 1.3-1.2 2.4 0 1.8 1.5 3 3.2 3h.5c1.7 0 3.2-1.2 3.2-3 0-1.1-.5-1.9-1.2-2.4.6-.6 1-1.3 1-2.3C11 3 9.5 1.5 7.5 1.5"
-                              stroke="currentColor"
-                              strokeWidth="1.2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path d="M8 5.2v7.3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
                     <ChatPane session={activeSession} permissions={activePermissions} />
                     <Composer
                       disabled={!ready}

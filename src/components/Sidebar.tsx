@@ -129,7 +129,10 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
         })}
       </div>
 
-      <div className="p-3 border-t" style={{ borderColor: "var(--gd-border)" }}>
+      {/* Slice 4: no border-t — was a second, independently-positioned
+          hairline that never lined up with the composer's line in the main
+          pane. Site never has competing pane-border T-junctions. */}
+      <div className="p-3">
         <button
           onClick={() => setSettingsOpen(true)}
           className="gd-glow-hover-row w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium border border-transparent"

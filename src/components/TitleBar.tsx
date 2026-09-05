@@ -133,7 +133,7 @@ function handleDragMouseDown(e: React.MouseEvent) {
   win.startDragging();
 }
 
-export function TitleBar({ title }: { title: string }) {
+export function TitleBar({ title, extra }: { title: string; extra?: React.ReactNode }) {
   const leading = isWindows ? (
     <div className="w-[68px] h-full shrink-0" />
   ) : (
@@ -146,7 +146,13 @@ export function TitleBar({ title }: { title: string }) {
   return (
     <div
       className="h-10 shrink-0 flex items-center justify-between select-none border-b"
-      style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
+      style={{
+        borderColor: "var(--gd-border)",
+        // Site's `.terminal-bar` wash (linear-gradient(180deg, rgba(255,255,255,0.04),
+        // transparent)) layered over the base metal fill — CSS background shorthand
+        // supports multiple comma-separated layers, gradient paints on top.
+        background: "linear-gradient(180deg, rgba(255,255,255,0.04), transparent), var(--gd-surface)",
+      }}
     >
       {/* The drag region lives only on the empty title/spacer areas, never
           on an ancestor of the window-control buttons — nesting it around
@@ -160,6 +166,14 @@ export function TitleBar({ title }: { title: string }) {
       >
         {title}
       </div>
+      {/* Dock tabs (slice 4) — not a drag region, sits between the title and
+          the trailing spacer so clicks reach the buttons instead of starting
+          a window drag. */}
+      {extra && (
+        <div className="h-full flex items-center gap-1 pr-2" onMouseDown={(e) => e.stopPropagation()}>
+          {extra}
+        </div>
+      )}
       {trailing}
     </div>
   );

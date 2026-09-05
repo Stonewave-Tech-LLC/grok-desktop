@@ -47,7 +47,7 @@ export function NewSessionDialog({
           borderColor: "var(--gd-border)",
           background: "var(--gd-surface)",
           boxShadow:
-            "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.45), 0 16px 48px rgba(0,0,0,0.45)",
+            "var(--gd-panel-shadow)",
         }}
       >
         <div className="text-[15px] font-semibold mb-4" style={{ color: "var(--gd-text)" }}>
