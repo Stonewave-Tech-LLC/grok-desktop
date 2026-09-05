@@ -343,6 +343,63 @@ export async function captureEpisodic(
   await writeAnvilEntry(scope, "episodic", episodicSlug(), name, description, text, undefined, cwd);
 }
 
+// ─────────────────────── Operator memory: dream (densify + learn) ───────────────────────
+// See docs/OPERATOR_MEMORY.md. Copy-on-write: a dream never touches the
+// live store — it writes a candidate under `.anvil/dream/`, reviewed here,
+// explicitly Attached or Discarded. Never auto-attached.
+
+export interface DreamStateCardInput {
+  focus?: string;
+  lastDecided?: string;
+  openBlockers?: string;
+}
+
+export interface DreamEpisodicInput {
+  name: string;
+  description: string;
+  body: string;
+  supersedes?: string[];
+}
+
+export interface DreamPlaybookInput {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface DreamCandidateInfo {
+  generatedAtMs: number;
+  summary: string;
+  status: "pending" | "attached" | "discarded";
+  supersededCount: number;
+  entries: MemoryEntryMeta[];
+  hasStateCardUpdate: boolean;
+  stateCard?: StateCard;
+}
+
+export async function writeDreamCandidate(
+  cwd: string,
+  stateCard: DreamStateCardInput | undefined,
+  episodics: DreamEpisodicInput[],
+  playbooks: DreamPlaybookInput[],
+  summary: string
+): Promise<void> {
+  await invoke("write_dream_candidate", { cwd, stateCard, episodics, playbooks, summary });
+}
+
+export async function readDreamCandidate(cwd: string): Promise<DreamCandidateInfo | undefined> {
+  const result = (await invoke("read_dream_candidate", { cwd })) as DreamCandidateInfo | null;
+  return result ?? undefined;
+}
+
+export async function attachDreamCandidate(cwd: string): Promise<void> {
+  await invoke("attach_dream_candidate", { cwd });
+}
+
+export async function discardDreamCandidate(cwd: string): Promise<void> {
+  await invoke("discard_dream_candidate", { cwd });
+}
+
 // ───────────────────────── Voice mode ─────────────────────────
 
 export interface VoiceEvent {

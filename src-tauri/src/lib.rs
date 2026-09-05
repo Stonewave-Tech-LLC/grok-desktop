@@ -104,6 +104,10 @@ pub fn run() {
             memory::delete_anvil_entry,
             memory::read_state_card,
             memory::write_state_card,
+            memory::write_dream_candidate,
+            memory::read_dream_candidate,
+            memory::attach_dream_candidate,
+            memory::discard_dream_candidate,
             voice::start_voice,
             voice::stop_voice,
         ])

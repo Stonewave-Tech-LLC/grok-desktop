@@ -8,21 +8,27 @@ import {
   writeStateCard,
   captureEpisodic,
   sendPrompt,
+  readDreamCandidate,
+  attachDreamCandidate,
+  discardDreamCandidate,
   type MemoryEntry,
   type MemoryEntryMeta,
   type StateCard,
+  type DreamCandidateInfo,
 } from "../lib/api";
+import { buildDreamPrompt, parseDreamReply, saveDreamCandidate } from "../lib/dream";
 import { useSessionStore, type ChatSession } from "../store/sessions";
 import { isStale } from "../lib/memoryStaleness";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 const PROJECT_TYPES = ["project", "decision", "issue"] as const;
 const GLOBAL_TYPES = ["person", "preference", "reference"] as const;
-// Deliberately does NOT include "episodic" — that type is never offered in
-// the manual-entry form, only ever written by captureEpisodic() (grok's own
-// flush/dream output, or an explicit "Capture now"). See
-// docs/OPERATOR_MEMORY.md diamond 2/3: single writer, always something
-// already graded, never a live save-trivia tool.
+// Deliberately does NOT include "episodic" or "playbook" — those types are
+// never offered in the manual-entry form. Episodic only ever comes from
+// captureEpisodic() (grok's own flush/dream output, or "Capture now").
+// Playbook only ever comes from an attached Dream (docs/OPERATOR_MEMORY.md
+// diamond 2/3: single writer, always something already graded, never a
+// live save-trivia tool).
 const ALL_TYPES = [...PROJECT_TYPES, ...GLOBAL_TYPES];
 
 function titleCase(s: string): string {
@@ -324,6 +330,70 @@ function StateCardPanel({ cwd }: { cwd: string }) {
   );
 }
 
+// Copy-on-write review (docs/OPERATOR_MEMORY.md diamond: "review-before-
+// attach is non-negotiable for the first ship"). A pending dream never
+// touched the live store — this just shows what it *would* change. `--gd-
+// border-glow` marks it as needing attention without reaching for a warning
+// color (no yellow, no cyan — same metal language as everything else).
+function DreamReviewPanel({
+  candidate,
+  onAttach,
+  onDiscard,
+}: {
+  candidate: DreamCandidateInfo;
+  onAttach: () => Promise<void>;
+  onDiscard: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const episodicCount = candidate.entries.filter((e) => e.type === "episodic").length;
+  const playbookCount = candidate.entries.filter((e) => e.type === "playbook").length;
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="rounded-[var(--gd-radius-md)] p-3 space-y-2"
+      style={{ background: "var(--gd-surface)", boxShadow: "var(--gd-panel-shadow)", border: "1px solid var(--gd-border-glow)" }}
+    >
+      <div className="text-[9.5px] uppercase tracking-wide" style={{ color: "var(--gd-text-faint)" }}>
+        Dream — pending review
+      </div>
+      <div className="text-[12px]" style={{ color: "var(--gd-text)" }}>
+        {candidate.summary || "No summary provided."}
+      </div>
+      <div className="text-[10.5px] font-mono" style={{ color: "var(--gd-text-muted)" }}>
+        {candidate.hasStateCardUpdate && "state card update · "}
+        {episodicCount} episodic{episodicCount === 1 ? "" : "s"}
+        {candidate.supersededCount > 0 ? ` (supersedes ${candidate.supersededCount})` : ""}
+        {playbookCount > 0 ? ` · ${playbookCount} playbook${playbookCount === 1 ? "" : "s"}` : ""}
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={() => run(onAttach)}
+          disabled={busy}
+          className="gd-billet flex-1 text-[11.5px] font-semibold px-3 py-1.5 rounded-[var(--gd-radius-sm)] disabled:opacity-40"
+        >
+          Attach
+        </button>
+        <button
+          onClick={() => run(onDiscard)}
+          disabled={busy}
+          className="gd-ghost flex-1 text-[11.5px] font-medium px-3 py-1.5 rounded-[var(--gd-radius-sm)] disabled:opacity-40"
+        >
+          Discard
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: string }) {
   const memoryEnabled = useSessionStore((s) => s.memoryEnabled);
   const memoryActiveThisRun = useSessionStore((s) => s.memoryActiveThisRun);
@@ -334,14 +404,26 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
   const [selectedEntry, setSelectedEntry] = useState<MemoryEntry | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [dreaming, setDreaming] = useState(false);
+  const [candidate, setCandidate] = useState<DreamCandidateInfo | undefined>(undefined);
 
   async function refresh() {
     const list = await listAnvilEntries(cwd).catch(() => []);
     setEntries(list);
   }
 
+  async function refreshCandidate() {
+    if (!cwd) {
+      setCandidate(undefined);
+      return;
+    }
+    const c = await readDreamCandidate(cwd).catch(() => undefined);
+    setCandidate(c && c.status === "pending" ? c : undefined);
+  }
+
   useEffect(() => {
     refresh();
+    refreshCandidate();
     setSelectedPath(undefined);
     setSelectedEntry(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -401,10 +483,58 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
     }
   }
 
-  const bodyEntries = entries.filter((e) => e.type !== "episodic");
+  // Dream = the third clock (docs/OPERATOR_MEMORY.md): cross-session
+  // densify + learn, not another episodic toast. Same honesty rule as
+  // Capture Now — grok's real /dream can't be triggered over ACP, so this
+  // is Anvil's own synthesis turn. Copy-on-write: writes a *candidate* only,
+  // never touches the live store — see DreamReviewPanel for Attach/Discard.
+  async function handleDream() {
+    if (!sessionId || !cwd || dreaming) return;
+    setDreaming(true);
+    try {
+      const stateCard = await readStateCard(cwd);
+      const episodicMetas = entries.filter((e) => e.type === "episodic");
+      const episodicFull = await Promise.all(episodicMetas.map((e) => readAnvilEntry(e.path)));
+      const prompt = buildDreamPrompt(
+        stateCard,
+        episodicFull.map((e) => ({ slug: e.slug, name: e.name, body: e.body }))
+      );
+      appendUserMessage(sessionId, prompt);
+      try {
+        await sendPrompt(sessionId, prompt);
+      } finally {
+        finalizeTurn(sessionId);
+      }
+      const session = useSessionStore.getState().sessions[sessionId];
+      const reply = session ? extractLastAssistantText(session) : undefined;
+      const parsed = reply ? parseDreamReply(reply) : undefined;
+      if (parsed) {
+        await saveDreamCandidate(cwd, parsed);
+        await refreshCandidate();
+      }
+    } finally {
+      setDreaming(false);
+    }
+  }
+
+  async function handleAttachDream() {
+    if (!cwd) return;
+    await attachDreamCandidate(cwd);
+    setCandidate(undefined);
+    refresh();
+  }
+
+  async function handleDiscardDream() {
+    if (!cwd) return;
+    await discardDreamCandidate(cwd);
+    setCandidate(undefined);
+  }
+
+  const bodyEntries = entries.filter((e) => e.type !== "episodic" && e.type !== "playbook");
   const projectEntries = bodyEntries.filter((e) => (PROJECT_TYPES as readonly string[]).includes(e.type));
   const globalEntries = bodyEntries.filter((e) => (GLOBAL_TYPES as readonly string[]).includes(e.type));
   const episodicEntries = entries.filter((e) => e.type === "episodic").sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
+  const playbookEntries = entries.filter((e) => e.type === "playbook").sort((a, b) => b.modifiedAtMs - a.modifiedAtMs);
   const staleEntries = bodyEntries.filter(isStale);
 
   return (
@@ -434,22 +564,35 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
         />
       ) : (
         <div className="p-3 space-y-4">
+          {cwd && candidate && <DreamReviewPanel candidate={candidate} onAttach={handleAttachDream} onDiscard={handleDiscardDream} />}
+
           {cwd && (
             <div>
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-1.5 gap-1">
                 <div className="text-[9.5px] uppercase tracking-wide" style={{ color: "var(--gd-text-faint)" }}>
                   Current State
                 </div>
                 {sessionId && (
-                  <button
-                    onClick={handleCaptureNow}
-                    disabled={capturing}
-                    className="gd-glow-hover text-[10.5px] font-medium px-2 py-0.5 rounded-full border border-transparent disabled:opacity-40"
-                    style={{ color: "var(--gd-text-muted)" }}
-                    title="Ask this session for a graded summary, then save it as an episodic memory"
-                  >
-                    {capturing ? "Capturing…" : "Capture now"}
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={handleCaptureNow}
+                      disabled={capturing}
+                      className="gd-glow-hover text-[10.5px] font-medium px-2 py-0.5 rounded-full border border-transparent disabled:opacity-40"
+                      style={{ color: "var(--gd-text-muted)" }}
+                      title="Ask this session for a graded summary, then save it as an episodic memory"
+                    >
+                      {capturing ? "Capturing…" : "Capture now"}
+                    </button>
+                    <button
+                      onClick={handleDream}
+                      disabled={dreaming || Boolean(candidate)}
+                      className="gd-glow-hover text-[10.5px] font-medium px-2 py-0.5 rounded-full border border-transparent disabled:opacity-40"
+                      style={{ color: "var(--gd-text-muted)" }}
+                      title="Densify + learn from episodic memory — writes a candidate you review before it touches anything"
+                    >
+                      {dreaming ? "Dreaming…" : "Dream"}
+                    </button>
+                  </div>
                 )}
               </div>
               <StateCardPanel cwd={cwd} />
@@ -463,6 +606,19 @@ export function MemoryPanel({ cwd, sessionId }: { cwd?: string; sessionId?: stri
               </div>
               <div className="space-y-0.5">
                 {episodicEntries.slice(0, 5).map((e) => (
+                  <EntryRow key={e.path} entry={e} active={e.path === selectedPath} onClick={() => setSelectedPath(e.path)} onDelete={() => handleDelete(e)} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {playbookEntries.length > 0 && (
+            <div>
+              <div className="text-[9.5px] uppercase tracking-wide px-0.5 mb-1" style={{ color: "var(--gd-text-faint)" }}>
+                Learned
+              </div>
+              <div className="space-y-0.5">
+                {playbookEntries.map((e) => (
                   <EntryRow key={e.path} entry={e} active={e.path === selectedPath} onClick={() => setSelectedPath(e.path)} onDelete={() => handleDelete(e)} />
                 ))}
               </div>

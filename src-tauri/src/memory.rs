@@ -781,3 +781,239 @@ pub fn delete_anvil_entry(
 
     Ok(())
 }
+
+// ───────────────────────── operator memory: dream (densify + learn) ─────────────────────────
+//
+// Three clocks (see docs/OPERATOR_MEMORY.md): compaction (grok, in-session,
+// not our concern), flush (grok captures a graded session summary — v1
+// promotes it into an episodic entry), dream (cross-session densify + learn
+// — this). Copy-on-write throughout: a dream never touches the live
+// `.anvil/memory/` store directly. It writes a *candidate* under the
+// sibling `.anvil/dream/` directory (deliberately NOT inside
+// `.anvil/memory/` — `scan_scope` there treats every subdirectory as a type,
+// which would make a `.dream-candidate` folder show up as bogus entries).
+// The cockpit shows what a pending candidate would change; a human
+// Attaches or Discards. Nothing here auto-attaches.
+//
+// grok-build's own `/dream` (like `/flush`, see v1) is TUI-only and isn't
+// exposed over ACP — it can't be triggered remotely, and it operates on
+// grok's OWN `~/.grok/memory/` store, not this curated layer anyway. This
+// is Anvil's own synthesis, run as one explicit turn on the current
+// session (same mechanism as Capture Now), never presented as if it were
+// grok's native `/dream`.
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DreamStateCard {
+    focus: Option<String>,
+    last_decided: Option<String>,
+    open_blockers: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DreamEpisodic {
+    name: String,
+    description: String,
+    body: String,
+    #[serde(default)]
+    supersedes: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub struct DreamPlaybook {
+    name: String,
+    description: String,
+    body: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct DreamMetaFile {
+    generated_at_ms: i64,
+    summary: String,
+    status: String, // "pending" | "attached" | "discarded"
+    superseded_slugs: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DreamCandidateInfo {
+    generated_at_ms: i64,
+    summary: String,
+    status: String,
+    superseded_count: usize,
+    entries: Vec<MemoryEntryMeta>,
+    has_state_card_update: bool,
+    state_card: Option<StateCard>,
+}
+
+fn dream_dir(cwd: &Path) -> PathBuf {
+    find_repo_root(cwd).join(".anvil").join("dream")
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn unique_dream_slug(prefix: &str, index: usize) -> String {
+    format!("{prefix}-{}-{}", now_ms(), index)
+}
+
+fn write_candidate_entry(dir: &Path, type_name: &str, slug: &str, name: &str, description: &str, body: &str) -> Result<(), String> {
+    let type_dir = dir.join(type_name);
+    fs::create_dir_all(&type_dir).map_err(|e| e.to_string())?;
+    let safe_slug = {
+        let s = slugify(slug);
+        if s.is_empty() { "entry".to_string() } else { s }
+    };
+    let path = type_dir.join(format!("{safe_slug}.md"));
+    fs::write(&path, render_entry(name, type_name, description, None, body)).map_err(|e| e.to_string())
+}
+
+/// Writes a brand-new candidate, replacing whatever pending/attached/
+/// discarded one existed before — a fresh dream always supersedes the
+/// previous candidate's *proposal*, regardless of what the human did with
+/// it (an attached one already copied its useful content into the live
+/// store; a discarded one was already rejected).
+#[tauri::command]
+pub fn write_dream_candidate(
+    cwd: String,
+    state_card: Option<DreamStateCard>,
+    episodics: Vec<DreamEpisodic>,
+    playbooks: Vec<DreamPlaybook>,
+    summary: String,
+) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let dir = dream_dir(cwd_path);
+    if dir.exists() {
+        fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    if let Some(card) = &state_card {
+        let rendered = render_state_card_file(
+            card.focus.as_deref().unwrap_or(""),
+            card.last_decided.as_deref().unwrap_or(""),
+            card.open_blockers.as_deref().unwrap_or(""),
+        );
+        fs::write(dir.join("STATE.md"), rendered).map_err(|e| e.to_string())?;
+    }
+
+    let mut superseded_slugs = Vec::new();
+    for (i, e) in episodics.iter().enumerate() {
+        let slug = unique_dream_slug("dream-episodic", i);
+        write_candidate_entry(&dir, "episodic", &slug, &e.name, &e.description, &e.body)?;
+        superseded_slugs.extend(e.supersedes.iter().cloned());
+    }
+    for (i, p) in playbooks.iter().enumerate() {
+        let slug = unique_dream_slug("dream-playbook", i);
+        write_candidate_entry(&dir, "playbook", &slug, &p.name, &p.description, &p.body)?;
+    }
+
+    let meta = DreamMetaFile {
+        generated_at_ms: now_ms(),
+        summary,
+        status: "pending".to_string(),
+        superseded_slugs,
+    };
+    fs::write(dir.join("DREAM_META.json"), serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn read_dream_candidate(cwd: String) -> Result<Option<DreamCandidateInfo>, String> {
+    let dir = dream_dir(Path::new(&cwd));
+    let Ok(meta_raw) = fs::read_to_string(dir.join("DREAM_META.json")) else {
+        return Ok(None);
+    };
+    let meta: DreamMetaFile = serde_json::from_str(&meta_raw).map_err(|e| e.to_string())?;
+    let entries = scan_scope(&dir);
+    let state_card = fs::read_to_string(dir.join("STATE.md")).ok().map(|s| {
+        let mut card = parse_state_card(&s);
+        card.last_commit = None;
+        card
+    });
+    Ok(Some(DreamCandidateInfo {
+        generated_at_ms: meta.generated_at_ms,
+        summary: meta.summary,
+        status: meta.status,
+        superseded_count: meta.superseded_slugs.len(),
+        has_state_card_update: state_card.is_some(),
+        state_card,
+        entries,
+    }))
+}
+
+/// Copies the candidate's entries into the live store, deletes whatever it
+/// declared superseded, overwrites STATE.md if a state-card update was
+/// proposed, then regenerates the index and bridge exactly like a normal
+/// write — this is the *only* place a dream ever touches the live store,
+/// and only on explicit human action.
+#[tauri::command]
+pub fn attach_dream_candidate(cwd: String, state: tauri::State<'_, GrokState>) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let dir = dream_dir(cwd_path);
+    let meta_raw = fs::read_to_string(dir.join("DREAM_META.json")).map_err(|_| "no pending dream to attach".to_string())?;
+    let mut meta: DreamMetaFile = serde_json::from_str(&meta_raw).map_err(|e| e.to_string())?;
+    if meta.status != "pending" {
+        return Err(format!("dream is not pending (status: {})", meta.status));
+    }
+
+    let live_dir = anvil_project_dir(cwd_path);
+
+    for slug in &meta.superseded_slugs {
+        let path = live_dir.join("episodic").join(format!("{slug}.md"));
+        let _ = fs::remove_file(path);
+    }
+
+    for entry_type in ["episodic", "playbook"] {
+        let src_dir = dir.join(entry_type);
+        let Ok(read) = fs::read_dir(&src_dir) else { continue };
+        let dst_dir = live_dir.join(entry_type);
+        fs::create_dir_all(&dst_dir).map_err(|e| e.to_string())?;
+        for f in read.flatten() {
+            let src = f.path();
+            if src.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Some(name) = src.file_name() {
+                fs::copy(&src, dst_dir.join(name)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    let candidate_state = dir.join("STATE.md");
+    if candidate_state.is_file() {
+        let content = fs::read_to_string(&candidate_state).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&live_dir).map_err(|e| e.to_string())?;
+        fs::write(live_dir.join("STATE.md"), content).map_err(|e| e.to_string())?;
+    }
+
+    regenerate_index(&live_dir)?;
+    if state.memory_active {
+        regenerate_bridge_project(cwd_path, &live_dir)?;
+    }
+
+    meta.status = "attached".to_string();
+    fs::write(dir.join("DREAM_META.json"), serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn discard_dream_candidate(cwd: String) -> Result<(), String> {
+    let dir = dream_dir(Path::new(&cwd));
+    if let Ok(meta_raw) = fs::read_to_string(dir.join("DREAM_META.json")) {
+        if let Ok(mut meta) = serde_json::from_str::<DreamMetaFile>(&meta_raw) {
+            meta.status = "discarded".to_string();
+            if let Ok(rendered) = serde_json::to_string_pretty(&meta) {
+                let _ = fs::write(dir.join("DREAM_META.json"), rendered);
+            }
+        }
+    }
+    Ok(())
+}
