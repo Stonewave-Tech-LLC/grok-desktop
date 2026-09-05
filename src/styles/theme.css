@@ -185,6 +185,25 @@ body {
   transform: translateY(0) scale(0.97);
 }
 
+/* Ghost button — site's `.btn-ghost` 1:1: transparent until hovered, no
+   color-coding (no warning-yellow/danger-red backgrounds). Used for the
+   secondary action on a decision (PermissionCard's Deny) so the one billet
+   stays the only loud thing on the panel — "same decision, different
+   clothes" instead of the old yellow-alert treatment. */
+.gd-ghost {
+  background: transparent;
+  border: 1px solid var(--gd-border-strong);
+  color: var(--gd-text-muted);
+  transition: color var(--gd-dur-fast) ease, border-color var(--gd-dur-fast) ease, background var(--gd-dur-fast) ease,
+    box-shadow var(--gd-dur-fast) ease;
+}
+.gd-ghost:hover {
+  color: var(--gd-text);
+  background: var(--gd-accent-soft);
+  border-color: var(--gd-border-glow);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.12);
+}
+
 /* White glow hover for non-billet interactive surfaces (secondary buttons,
    metal chrome). Heats the metal with white light, never a brand hue. Scale
    (not just color/border) is what actually reads as "alive" at a glance —
