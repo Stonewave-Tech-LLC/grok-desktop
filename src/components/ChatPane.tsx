@@ -6,6 +6,7 @@ import { PermissionCard } from "./PermissionCard";
 import { PlanApprovalCard } from "./PlanApprovalCard";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { useSessionStore } from "../store/sessions";
+import { EmptyCanvas } from "./EmptyCanvas";
 
 function ThinkingDots() {
   return (
@@ -68,8 +69,17 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
     setAtBottom(true);
   }
 
+  const isBlank =
+    session.timeline.length === 0 &&
+    !session.streamingText &&
+    session.status === "idle" &&
+    permissions.length === 0;
+
   return (
     <div className="flex-1 min-h-0 relative">
+      {isBlank ? (
+        <EmptyCanvas kind="empty-session" />
+      ) : (
       <div ref={containerRef} className="h-full overflow-y-auto px-6 py-5">
       <div className="max-w-4xl mx-auto space-y-1">
         {session.timeline.map((item, idx) => {
@@ -160,6 +170,7 @@ export function ChatPane({ session, permissions }: { session: ChatSession; permi
         <div ref={bottomRef} />
       </div>
       </div>
+      )}
 
       {!atBottom && (
         <button

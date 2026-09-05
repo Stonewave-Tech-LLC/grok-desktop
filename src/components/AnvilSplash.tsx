@@ -28,8 +28,8 @@ export function AnvilSplash({ status, errorMessage, onRetry }: { status: BootSta
           initial={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-          className="absolute inset-0 z-50 flex items-center justify-center"
-          style={{ background: "rgba(10, 10, 12, 0.86)" }}
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          style={{ background: "rgba(10, 10, 12, 0.92)" }}
         >
           <div className="flex flex-col items-center gap-4 px-6 text-center">
             <div className="text-[10.5px] font-mono tracking-[0.3em] uppercase" style={{ color: "var(--gd-text-faint)" }}>

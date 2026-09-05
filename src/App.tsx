@@ -23,6 +23,7 @@ import {
   memoryRuntimeStatus,
 } from "./lib/api";
 import { MemoryToast } from "./components/MemoryToast";
+import { EmptyCanvas } from "./components/EmptyCanvas";
 
 export default function App() {
   const [authState, setAuthState] = useState<"checking" | "unauthenticated" | "authenticated">("checking");
@@ -107,6 +108,11 @@ export default function App() {
     setBootStatus("initializing");
     setBootError(undefined);
 
+    // Each phase is shown at least this long so the wordmark/heat-scan actually
+    // reads on a fast local boot (otherwise the overlay is gone in <300ms).
+    const dwell = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const PHASE_MS = 900;
+
     (async () => {
       // A command (request/response), not a "ready" event — correct
       // regardless of how fast this effect happens to run relative to the
@@ -115,7 +121,7 @@ export default function App() {
       // actually fatal to the app being usable at all — checkAuth failing
       // just means "assume unauthenticated, the onboarding screen after the
       // splash handles it", so it's swallowed rather than propagated.
-      const [authOk] = await Promise.all([checkAuth().catch(() => false), initStatus()]);
+      const [authOk] = await Promise.all([checkAuth().catch(() => false), initStatus(), dwell(PHASE_MS)]);
       if (cancelled) return;
       setAuthState(authOk ? "authenticated" : "unauthenticated");
       setReady(true);
@@ -124,21 +130,24 @@ export default function App() {
       // grok's own on-disk session history can be large; a failure here
       // (unsupported CLI version, transient RPC error) shouldn't block the
       // app on local-only sessions still being fully usable.
-      const remote = await listSessions().catch(() => []);
+      const [remote] = await Promise.all([listSessions().catch(() => []), dwell(PHASE_MS)]);
       if (cancelled) return;
       mergeRemoteSessions(remote);
 
       setBootStatus("reattaching");
       const active = useSessionStore.getState().activeSessionId;
       const sessionToReattach = active ? useSessionStore.getState().sessions[active] : undefined;
-      if (active && sessionToReattach && !useSessionStore.getState().reattachedSessionIds.has(active)) {
-        try {
-          await loadSession(active, sessionToReattach.cwd);
-          markReattached(active);
-        } catch (err) {
-          setLastError(`Couldn't reconnect "${sessionToReattach.title}": ${String(err)}`);
+      const reattach = (async () => {
+        if (active && sessionToReattach && !useSessionStore.getState().reattachedSessionIds.has(active)) {
+          try {
+            await loadSession(active, sessionToReattach.cwd);
+            markReattached(active);
+          } catch (err) {
+            setLastError(`Couldn't reconnect "${sessionToReattach.title}": ${String(err)}`);
+          }
         }
-      }
+      })();
+      await Promise.all([reattach, dwell(PHASE_MS)]);
       if (cancelled) return;
       setBootStatus("ready");
     })().catch((err) => {
@@ -336,23 +345,11 @@ export default function App() {
                   </AnimatePresence>
                 </>
               ) : (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center max-w-sm">
-                    <div className="text-[15px] font-medium mb-1" style={{ color: "var(--gd-text)" }}>
-                      Anvil
-                    </div>
-                    <div className="text-[13px] mb-4" style={{ color: "var(--gd-text-muted)" }}>
-                      {ready ? "Start a new session to chat with grok." : "Connecting to the grok CLI…"}
-                    </div>
-                    <button
-                      onClick={() => setNewSessionDialogOpen(true)}
-                      disabled={!ready}
-                      className="gd-billet rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
-                    >
-                      New Session
-                    </button>
-                  </div>
-                </div>
+                <EmptyCanvas
+                  kind="no-session"
+                  onNewSession={() => setNewSessionDialogOpen(true)}
+                  newSessionDisabled={!ready}
+                />
               )}
             </div>
           </>
