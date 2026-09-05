@@ -259,11 +259,17 @@ body {
 
 /* Ambient background layer — the metal-dark chrome felt flat next to the
    marketing site's orb/noise/vignette treatment (anvil-site globals.css).
-   Ported down for a WebView budget: no filter:blur() (GPU-expensive to run
-   continuously in a webview), just soft radial-gradient falloff instead, and
-   a static (non-animated) noise layer so the only ongoing animation cost is
-   two cheap transform/opacity tweens. Stays monochrome per the header note
-   above — white glow, not a brand hue. */
+   PERF TEST (slice 3, in progress): the original version avoided
+   filter:blur() on the assumption it's too GPU-expensive to run
+   continuously in a webview — that was never actually measured. Testing
+   real blur(80px) (site's exact value) on the existing two orbs, same
+   sizing/gradient/animation otherwise, as a single-variable change so a
+   real CPU/GPU profile decides this instead of a design-time guess. If it
+   holds up under sustained drift (not just a one-shot dialog open like the
+   backdrop-blur test), keep it; if not, revert to the radial-gradient-only
+   fallback this comment used to describe. Noise layer stays static either
+   way. Stays monochrome per the header note above — white glow, not a
+   brand hue. */
 .gd-ambient {
   position: absolute;
   inset: 0;
@@ -275,6 +281,7 @@ body {
 .gd-ambient-orb {
   position: absolute;
   border-radius: 50%;
+  filter: blur(80px);
   will-change: transform, opacity;
 }
 
