@@ -6,8 +6,20 @@
 // presented as if it were the native command. Output is parsed defensively:
 // a malformed or missing JSON block means no candidate gets written, never
 // a crash or garbage in the store.
+import type { ChatSession } from "../store/sessions";
+import { useSessionStore } from "../store/sessions";
 import type { StateCard, DreamStateCardInput, DreamEpisodicInput, DreamPlaybookInput } from "./api";
-import { writeDreamCandidate } from "./api";
+import {
+  listAnvilEntries,
+  readAnvilEntry,
+  readDreamCandidate,
+  readStateCard,
+  sendPrompt,
+  writeDreamCandidate,
+} from "./api";
+
+export const AUTO_DREAM_MIN_EPISODICS = 5;
+export const AUTO_DREAM_MIN_MS = 24 * 60 * 60 * 1000;
 
 export function buildDreamPrompt(stateCard: StateCard, episodics: { slug: string; name: string; body: string }[]): string {
   const lines: string[] = [
@@ -103,4 +115,67 @@ export function parseDreamReply(replyText: string): ParsedDream | undefined {
 
 export async function saveDreamCandidate(cwd: string, dream: ParsedDream): Promise<void> {
   await writeDreamCandidate(cwd, dream.stateCard, dream.episodics, dream.playbooks, dream.summary || "Dream synthesis");
+}
+
+export function extractDreamReplyText(session: ChatSession): string | undefined {
+  for (let i = session.timeline.length - 1; i >= 0; i--) {
+    const item = session.timeline[i];
+    if (item.sessionUpdate !== "agent_message_final") continue;
+    const text = typeof item.raw.text === "string" ? item.raw.text : "";
+    if (/```json/i.test(text)) return text;
+  }
+  for (let i = session.timeline.length - 1; i >= 0; i--) {
+    const item = session.timeline[i];
+    if (item.sessionUpdate === "agent_message_final" && typeof item.raw.text === "string") {
+      return item.raw.text;
+    }
+  }
+  return undefined;
+}
+
+function uniqueEpisodics<T extends { path: string; type: string }>(list: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const e of list) {
+    if (e.type !== "episodic") continue;
+    if (seen.has(e.path)) continue;
+    seen.add(e.path);
+    out.push(e);
+  }
+  return out;
+}
+
+/// Shared by the cockpit button and the idle auto-trigger. Writes a candidate
+/// only — never attaches. Returns true if a pending candidate is on disk.
+export async function runOperatorDream(sessionId: string, cwd: string): Promise<boolean> {
+  const list = uniqueEpisodics(await listAnvilEntries(cwd).catch(() => []));
+  const stateCard = await readStateCard(cwd);
+  const episodicFull = await Promise.all(list.map((e) => readAnvilEntry(e.path)));
+  const prompt = buildDreamPrompt(
+    stateCard,
+    episodicFull.map((e) => ({ slug: e.slug, name: e.name, body: e.body })),
+  );
+  const store = useSessionStore.getState();
+  store.appendUserMessage(sessionId, prompt);
+  try {
+    await sendPrompt(sessionId, prompt);
+  } finally {
+    store.finalizeTurn(sessionId);
+  }
+  const session = useSessionStore.getState().sessions[sessionId];
+  const reply = session ? extractDreamReplyText(session) : undefined;
+  const parsed = reply ? parseDreamReply(reply) : undefined;
+  if (!parsed) return false;
+  await saveDreamCandidate(cwd, parsed);
+  return true;
+}
+
+export async function uniqueEpisodicCount(cwd: string): Promise<number> {
+  const list = await listAnvilEntries(cwd).catch(() => []);
+  return uniqueEpisodics(list).length;
+}
+
+export async function hasPendingDream(cwd: string): Promise<boolean> {
+  const c = await readDreamCandidate(cwd).catch(() => undefined);
+  return c?.status === "pending";
 }

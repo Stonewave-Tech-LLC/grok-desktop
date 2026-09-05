@@ -208,6 +208,12 @@ interface SessionStoreState {
   imagineAutoOpen: boolean;
   imagineDefaultAspect: ImagineAspect;
   lastWorkspace?: string;
+  // Operator dream auto-trigger (copy-on-write candidate, never auto-attach).
+  // autoDream + lastOperatorDreamAt persist; due/running are this-process only.
+  autoDream: boolean;
+  lastOperatorDreamAt?: number;
+  operatorDreamDue: boolean;
+  operatorDreamRunning: boolean;
   // Sessions with a turn WE started this process (via appendUserMessage) and
   // haven't yet seen finalized (finalizeTurn / turn_completed). Deliberately
   // NOT persisted (see partialize below) — it exists only to stop a reattached
@@ -236,6 +242,11 @@ interface SessionStoreState {
   setImagineAutoOpen: (v: boolean) => void;
   setImagineDefaultAspect: (v: ImagineAspect) => void;
   setLastWorkspace: (cwd: string) => void;
+  setAutoDream: (v: boolean) => void;
+  markOperatorDreamDue: () => void;
+  clearOperatorDreamDue: () => void;
+  setOperatorDreamRunning: (v: boolean) => void;
+  setLastOperatorDreamAt: (ms: number) => void;
   setActiveSession: (id: string) => void;
   appendUserMessage: (sessionId: string, text: string) => void;
   handleAcpEvent: (event: AcpEvent) => void;
@@ -317,6 +328,9 @@ export const useSessionStore = create<SessionStoreState>()(
   defaultYolo: false,
   imagineAutoOpen: true,
   imagineDefaultAspect: "auto",
+  autoDream: true,
+  operatorDreamDue: false,
+  operatorDreamRunning: false,
 
   setReady: (ready) => set({ ready }),
   setInitError: (msg) => set({ initError: msg }),
@@ -331,6 +345,11 @@ export const useSessionStore = create<SessionStoreState>()(
   setImagineAutoOpen: (v) => set({ imagineAutoOpen: v }),
   setImagineDefaultAspect: (v) => set({ imagineDefaultAspect: v }),
   setLastWorkspace: (cwd) => set({ lastWorkspace: cwd }),
+  setAutoDream: (v) => set({ autoDream: v }),
+  markOperatorDreamDue: () => set({ operatorDreamDue: true }),
+  clearOperatorDreamDue: () => set({ operatorDreamDue: false }),
+  setOperatorDreamRunning: (v) => set({ operatorDreamRunning: v }),
+  setLastOperatorDreamAt: (ms) => set({ lastOperatorDreamAt: ms }),
 
   registerSession: (id, cwd, yolo, modelId) =>
     set((s) => ({
@@ -570,6 +589,8 @@ export const useSessionStore = create<SessionStoreState>()(
         imagineAutoOpen: s.imagineAutoOpen,
         imagineDefaultAspect: s.imagineDefaultAspect,
         lastWorkspace: s.lastWorkspace,
+        autoDream: s.autoDream,
+        lastOperatorDreamAt: s.lastOperatorDreamAt,
       }),
       // A restored session's status ("streaming"/"thinking") describes a turn
       // that died with the old process — without normalizing it here, the
@@ -776,7 +797,7 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
     return;
   }
   if (kind === "memory_dream_completed") {
-    set(() => ({ memoryStatusMessage: "Memory consolidated" }));
+    set(() => ({ memoryStatusMessage: "Memory consolidated", operatorDreamDue: true }));
     promoteToEpisodic("grok dream");
     return;
   }

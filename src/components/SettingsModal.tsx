@@ -250,6 +250,8 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
   const memoryEnabled = useSessionStore((s) => s.memoryEnabled);
   const memoryActiveThisRun = useSessionStore((s) => s.memoryActiveThisRun);
   const setMemoryEnabled = useSessionStore((s) => s.setMemoryEnabled);
+  const autoDream = useSessionStore((s) => s.autoDream);
+  const setAutoDream = useSessionStore((s) => s.setAutoDream);
   const [saving, setSaving] = useState(false);
 
   async function handleToggle(next: boolean) {
@@ -298,6 +300,20 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
       <div className="flex items-center gap-1.5 mt-2 text-[11.5px]" style={{ color: statusColor }}>
         <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: "currentColor" }} />
         {saving ? "Saving…" : statusLabel}
+      </div>
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-[var(--gd-radius-md)] border mt-3"
+        style={{ borderColor: "var(--gd-border)", background: "var(--gd-metal-1)" }}
+      >
+        <div>
+          <div className="text-[12.5px]" style={{ color: "var(--gd-text)" }}>
+            Dream automatically
+          </div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+            After grok consolidates, or 5 episodics + 24h — candidate only, never auto-attach
+          </div>
+        </div>
+        <Toggle checked={autoDream} onChange={setAutoDream} />
       </div>
       <div className="text-[11.5px] mt-3 leading-relaxed" style={{ color: "var(--gd-text-faint)" }}>
         Stores notes in <code>.anvil/memory/</code> (this project) and{" "}

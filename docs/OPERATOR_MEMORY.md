@@ -90,8 +90,11 @@ it was *what* gets written, *when*, and *how it's surfaced*.
    prevention. Anvil's dream never touches `.anvil/memory/` directly: it
    writes a candidate under the sibling `.anvil/dream/`, the cockpit shows
    what changed, a human explicitly Attaches or Discards. Auto-attach is
-   future work, gated on having actually seen a dream that didn't poison —
-   not a v2 decision to make speculatively.
+   still gated on having seen a dream that didn't poison. Auto-*run* (v2.1)
+   is on: grok's `memory_dream_completed`, or ≥5 unique episodics and 24h
+   since the last operator dream, fires the same synthesis as the cockpit
+   button — only while idle, only a pending candidate. Settings → Memory →
+   "Dream automatically" (default on).
 
    **Learning, not more fact cards.** Dream's `instructions`-equivalent
    here is the prompt itself: densify (merge duplicate episodics, convert

@@ -26,6 +26,13 @@ import {
   setSessionModel,
 } from "./lib/api";
 import { parseSessionControls } from "./lib/sessionControls";
+import {
+  AUTO_DREAM_MIN_EPISODICS,
+  AUTO_DREAM_MIN_MS,
+  hasPendingDream,
+  runOperatorDream,
+  uniqueEpisodicCount,
+} from "./lib/dream";
 import { MemoryToast } from "./components/MemoryToast";
 import { EmptyCanvas } from "./components/EmptyCanvas";
 
@@ -71,9 +78,17 @@ export default function App() {
     memoryActiveThisRun,
     setMemoryEnabled,
     setMemoryActiveThisRun,
+    setMemoryStatusMessage,
     reattachedSessionIds,
     markReattached,
     mergeRemoteSessions,
+    autoDream,
+    operatorDreamDue,
+    operatorDreamRunning,
+    lastOperatorDreamAt,
+    clearOperatorDreamDue,
+    setOperatorDreamRunning,
+    setLastOperatorDreamAt,
   } = useSessionStore();
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
@@ -241,6 +256,55 @@ export default function App() {
       setLastError(`Couldn't start a session: ${String(err)}`);
     }
   }
+
+  // Auto operator-dream: grok's own /dream (or 5 unique episodics + 24h)
+  // marks us due; we only fire when the session is idle, and we never attach
+  // — a pending candidate is the whole point (review in the Memory cockpit).
+  useEffect(() => {
+    if (!autoDream || !ready || !activeSessionId || !activeSession) return;
+    if (activeSession.status !== "idle") return;
+    if (operatorDreamRunning) return;
+    if (pendingPermissions.some((p) => !p.sessionId || p.sessionId === activeSessionId)) return;
+    const cwd = activeSession.cwd;
+    const sessionId = activeSessionId;
+    let cancelled = false;
+    (async () => {
+      if (await hasPendingDream(cwd)) {
+        if (!cancelled && operatorDreamDue) {
+          clearOperatorDreamDue();
+          openDockTab("memory");
+        }
+        return;
+      }
+      let due = operatorDreamDue;
+      if (!due) {
+        const last = lastOperatorDreamAt ?? 0;
+        if (Date.now() - last < AUTO_DREAM_MIN_MS) return;
+        const n = await uniqueEpisodicCount(cwd);
+        due = n >= AUTO_DREAM_MIN_EPISODICS;
+      }
+      if (!due || cancelled) return;
+      setOperatorDreamRunning(true);
+      clearOperatorDreamDue();
+      try {
+        const ok = await runOperatorDream(sessionId, cwd);
+        if (cancelled) return;
+        setLastOperatorDreamAt(Date.now());
+        if (ok) {
+          setMemoryStatusMessage("Dream ready for review");
+          openDockTab("memory");
+        }
+      } catch (err) {
+        if (!cancelled) setLastError(`Auto-dream failed: ${String(err)}`);
+      } finally {
+        if (!cancelled) setOperatorDreamRunning(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDream, ready, activeSessionId, activeSession?.status, operatorDreamDue, pendingPermissions.length]);
 
   async function handleSend(text: string) {
     if (!activeSessionId) return;
