@@ -13,7 +13,9 @@ const LINES_EMPTY_SESSION = [
   "Silence where you focus.",
 ];
 
-const CYCLE_MS = 3200;
+const CYCLE_MS = 2800;
+
+const ease = [0.16, 1, 0.3, 1] as const;
 
 export function EmptyCanvas({
   kind,
@@ -33,44 +35,78 @@ export function EmptyCanvas({
   }, [lines.length]);
 
   return (
-    <div className="flex-1 flex items-center justify-center min-h-0 px-6">
+    <div className="absolute inset-0 flex items-center justify-center px-8">
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="flex flex-col items-center text-center max-w-sm"
+        initial={{ opacity: 0, y: 36, scale: 0.92 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.85, ease }}
+        className="flex flex-col items-center text-center"
       >
-        <div
-          className="text-[10px] font-mono tracking-[0.28em] uppercase mb-3"
+        <motion.div
+          initial={{ opacity: 0, letterSpacing: "0.4em" }}
+          animate={{ opacity: 1, letterSpacing: "0.28em" }}
+          transition={{ duration: 1.1, delay: 0.15, ease }}
+          className="text-[12px] font-mono uppercase mb-5"
           style={{ color: "var(--gd-text-faint)" }}
         >
           Stonewave / Grok Build
-        </div>
-        <div className="gd-splash-wordmark text-[40px] leading-none">ANVIL</div>
-        <div className="gd-heat-scan mt-4 mb-5" style={{ width: 140 }} />
-        <div className="h-5 min-w-[260px] flex items-center justify-center mb-5">
+        </motion.div>
+
+        <motion.div
+          className="gd-empty-wordmark"
+          initial={{ opacity: 0, scale: 0.86, filter: "blur(12px)" }}
+          animate={{
+            opacity: 1,
+            scale: 1,
+            filter: "blur(0px)",
+          }}
+          transition={{ duration: 0.9, delay: 0.08, ease }}
+        >
+          <motion.span
+            className="inline-block gd-splash-wordmark"
+            animate={{ y: [0, -8, 0] }}
+            transition={{ duration: 5.5, repeat: Infinity, ease: "easeInOut" }}
+          >
+            ANVIL
+          </motion.span>
+        </motion.div>
+
+        <motion.div
+          className="gd-heat-scan gd-empty-heat mt-7 mb-7"
+          initial={{ opacity: 0, scaleX: 0.2 }}
+          animate={{ opacity: 0.9, scaleX: 1 }}
+          transition={{ duration: 0.8, delay: 0.35, ease }}
+        />
+
+        <div className="h-8 min-w-[320px] flex items-center justify-center mb-8">
           <AnimatePresence mode="wait">
             <motion.span
               key={lines[i]}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-              className="text-[13px]"
+              initial={{ opacity: 0, y: 18, filter: "blur(6px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              exit={{ opacity: 0, y: -18, filter: "blur(6px)" }}
+              transition={{ duration: 0.45, ease }}
+              className="text-[17px] tracking-[-0.02em]"
               style={{ color: "var(--gd-text-muted)" }}
             >
               {lines[i]}
             </motion.span>
           </AnimatePresence>
         </div>
+
         {kind === "no-session" && onNewSession && (
-          <button
+          <motion.button
             onClick={onNewSession}
             disabled={newSessionDisabled}
-            className="gd-billet rounded-[var(--gd-radius-md)] px-4 py-2 text-sm font-semibold disabled:opacity-40 disabled:pointer-events-none"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.55, ease }}
+            whileHover={{ scale: 1.04, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            className="gd-billet rounded-[var(--gd-radius-md)] px-5 py-2.5 text-[15px] font-semibold disabled:opacity-40 disabled:pointer-events-none"
           >
             New Session
-          </button>
+          </motion.button>
         )}
       </motion.div>
     </div>
