@@ -121,7 +121,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
                   </button>
                 </div>
               </div>
-              <div className="text-[11px] truncate mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
+              <div className="text-[11px] font-mono truncate mt-0.5" style={{ color: "var(--gd-text-faint)" }}>
                 {s.cwd}
               </div>
             </div>

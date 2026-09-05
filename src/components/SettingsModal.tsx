@@ -69,7 +69,7 @@ function GeneralSection({ ready }: { ready: boolean }) {
         style={{ borderColor: "var(--gd-border)", background: "var(--gd-metal-1)", color: "var(--gd-text-muted)" }}
       >
         <span>grok CLI connection</span>
-        <span className="flex items-center gap-1.5" style={{ color: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
+        <span className="flex items-center gap-1.5 font-mono" style={{ color: ready ? "var(--gd-success)" : "var(--gd-text-faint)" }}>
           <span
             className={ready ? "h-1.5 w-1.5 rounded-full" : "h-1.5 w-1.5 rounded-full animate-pulse"}
             style={{ background: "currentColor" }}
@@ -211,7 +211,7 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
       className="absolute inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.6)" }}
+      style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
       onClick={onClose}
     >
       <motion.div
@@ -221,7 +221,12 @@ export function SettingsModal({ ready, onClose }: { ready: boolean; onClose: () 
         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
         className="w-[520px] h-[380px] rounded-[var(--gd-radius-lg)] border flex overflow-hidden"
-        style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
+        style={{
+          borderColor: "var(--gd-border)",
+          background: "var(--gd-surface)",
+          boxShadow:
+            "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.45), 0 16px 48px rgba(0,0,0,0.45)",
+        }}
       >
         <div
           className="w-40 shrink-0 border-r p-3 flex flex-col gap-0.5"

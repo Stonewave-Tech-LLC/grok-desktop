@@ -33,7 +33,7 @@ export function NewSessionDialog({
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
       className="absolute inset-0 z-50 flex items-center justify-center"
-      style={{ background: "rgba(0,0,0,0.45)" }}
+      style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)" }}
       onClick={onClose}
     >
       <motion.div
@@ -43,7 +43,12 @@ export function NewSessionDialog({
         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
         onClick={(e) => e.stopPropagation()}
         className="w-96 rounded-[var(--gd-radius-lg)] border p-5"
-        style={{ borderColor: "var(--gd-border)", background: "var(--gd-surface)" }}
+        style={{
+          borderColor: "var(--gd-border)",
+          background: "var(--gd-surface)",
+          boxShadow:
+            "inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(0,0,0,0.35), 0 0 0 1px rgba(0,0,0,0.45), 0 16px 48px rgba(0,0,0,0.45)",
+        }}
       >
         <div className="text-[15px] font-semibold mb-4" style={{ color: "var(--gd-text)" }}>
           New Session
