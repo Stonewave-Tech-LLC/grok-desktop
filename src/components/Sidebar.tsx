@@ -132,7 +132,7 @@ export function Sidebar({ onNewSession }: { onNewSession: () => void }) {
       <div className="p-3 border-t" style={{ borderColor: "var(--gd-border)" }}>
         <button
           onClick={() => setSettingsOpen(true)}
-          className="gd-glow-hover w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium border border-transparent"
+          className="gd-glow-hover-row w-full flex items-center gap-2 px-2 py-1.5 rounded-[var(--gd-radius-sm)] text-[12px] font-medium border border-transparent"
           style={{ color: "var(--gd-text-muted)", background: "var(--gd-surface-raised)" }}
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">

@@ -145,7 +145,7 @@ function MemorySection({ onBrowse }: { onBrowse: () => void }) {
       {memoryActiveThisRun && (
         <button
           onClick={onBrowse}
-          className="gd-glow-hover mt-4 w-full text-[12px] font-medium px-3 py-2 rounded-[var(--gd-radius-sm)] border border-transparent"
+          className="gd-glow-hover-row mt-4 w-full text-[12px] font-medium px-3 py-2 rounded-[var(--gd-radius-sm)] border border-transparent"
           style={{ color: "var(--gd-text)", background: "var(--gd-metal-1)" }}
         >
           Browse memory files

@@ -197,6 +197,21 @@ body {
   transform: scale(0.94);
 }
 
+/* Full-width row variant: same glow/border/bg feedback, no scale. Scale(1.1)
+   on a w-full row clips at the container edge or overlaps neighboring rows —
+   it was only ever meant for icon-sized controls. */
+.gd-glow-hover-row {
+  transition: box-shadow var(--gd-dur-fast) var(--gd-ease-spring), border-color var(--gd-dur-fast) ease, background var(--gd-dur-fast) ease;
+}
+.gd-glow-hover-row:hover {
+  border-color: var(--gd-border-glow);
+  background: var(--gd-accent-soft);
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.16);
+}
+.gd-glow-hover-row:active {
+  transform: scale(0.98);
+}
+
 /* Breathing ring for controls that represent live, cancelable work (the
    composer's stop button) — a passive "something is happening" signal on
    top of its own hover feedback, not just a static icon. */
