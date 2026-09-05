@@ -34,14 +34,15 @@ directly — it's a real protocol client, not a terminal wrapper. That gets you:
 - **A Cost Cockpit and Workflow Dashboard** — live cumulative token/cost tracking per
   session, plus a real-time view into grok's own `/workflow` and `/goal` multi-agent
   runs (phases, active agents, budget) instead of just a status line.
-- **Native Grok-Imagine integration** — generated images and videos render inline in
-  their tool-call cards with a lightbox and one-click download, and an **Asset
-  Manager** panel gathers everything generated across every session into one grid, with
-  a "regenerate variation" shortcut that prefills the composer.
-- **Anvil Memory** — an optional, structured memory system (typed entries: project,
-  decision, issue, person, preference, reference) that lives as plain markdown files and
-  bridges into grok's own native memory, so context survives across sessions instead of
-  starting from zero every time.
+- **Native Grok-Imagine integration** — generating stills overlay the chat (not a
+  thumb in the tool log). **Imagine Studio** is a working set (latest + prompt
+  families + edit/animate/vary/ref), not a dump grid. Model and permission mode
+  switchers talk ACP `session/set_model` and `session/set_mode`.
+- **Operator memory** — a state card, episodic captures, and a review-before-attach
+  **Dream** pass (densify + learn, copy-on-write candidate at `.anvil/dream/`). Lives
+  as markdown next to grok's own `~/.grok/memory/`; semantic recall stays grok's
+  FTS5/embeddings. Auto-dream when idle is on by default; nothing attaches until
+  you say so.
 - **Sessions** that survive an app restart — new / switch / rename / delete, with
   history persisted locally and the backend connection reattached automatically on
   launch. Login is handled in-app too: a first-run screen drives `grok login
@@ -58,11 +59,15 @@ Windows voice mode) rather than gaps in the core experience.
 
 ## Download
 
+Product site: [anvil.stonewavetech.com](https://anvil.stonewavetech.com).
+
 macOS (Apple Silicon) and Windows (x64) builds are published on
 [Releases](https://github.com/Stonewave-Tech-LLC/grok-desktop/releases). Builds are
 currently **unsigned**: macOS will warn about an unidentified developer on first launch
 (right-click → Open) and Windows SmartScreen will flag an unknown publisher — expected
-until code-signing is set up (see Roadmap).
+until a Developer ID / Windows Authenticode cert is in the Apple/Windows stores
+(see Roadmap). Apple Development identities on a build Mac can sign a local `.app`
+for that machine; they cannot notarize a public download.
 
 ## Getting started
 
@@ -114,12 +119,11 @@ stays honest:
 - Plugin browser
 - Worktree management UI
 - Voice mode on Windows (macOS is done — see What it does)
-- Signed & notarized release builds (needs a paid Apple Developer Program / Windows
-  code-signing cert — not set up yet)
+- Signed & notarized release builds (needs a paid Apple Developer Program **Developer
+  ID Application** cert plus a Windows Authenticode cert — Apple Development
+  identities are not enough to Gatekeeper-pass other people's Macs)
 - Auto-update
-- CI that produces and publishes real installer artifacts (today's CI only
-  compile-checks on macOS/Linux/Windows; release builds are produced and published
-  manually)
+- Intel macOS download (CI `macos-latest` is Apple Silicon; Intel is source-build)
 
 ## Contributing
 
