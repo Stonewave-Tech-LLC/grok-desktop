@@ -102,6 +102,8 @@ pub fn run() {
             memory::read_anvil_entry,
             memory::write_anvil_entry,
             memory::delete_anvil_entry,
+            memory::read_state_card,
+            memory::write_state_card,
             voice::start_voice,
             voice::stop_voice,
         ])

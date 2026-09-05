@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { AcpEvent, JsonValue } from "../types/acp";
 import type { ModelInfo, RemoteSessionStub } from "../lib/api";
+import { captureEpisodic } from "../lib/api";
 import {
   FALLBACK_MODES,
   modeImpliesYolo,
@@ -747,6 +748,23 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
   // they're handled before the sessionId-dependent branches below. No shared
   // ID between a `_started` and its matching `_completed`, so each one just
   // independently produces its own toast text rather than a spinner sequence.
+  //
+  // Operator memory hook (docs/OPERATOR_MEMORY.md, diamond 2): grok's own
+  // /flush and /dream already do the grading work — a `result`/`summary`
+  // text field here is genuinely already-distilled content, not a raw
+  // transcript. Promoting it into a durable, typed, bridged episodic entry
+  // is the entire curation trigger; nothing here asks the live coding
+  // session to save anything mid-turn. Best-effort (fire-and-forget) so a
+  // write failure never blocks the toast or anything else.
+  const promoteToEpisodic = (trigger: string) => {
+    const resultRaw = update.result ?? update.summary;
+    const result = typeof resultRaw === "string" ? resultRaw.trim() : "";
+    if (result.length < 20) return;
+    const cwd = useSessionStore.getState().sessions[sessionId]?.cwd;
+    if (!cwd) return;
+    captureEpisodic("project", trigger, result, cwd).catch(() => {});
+  };
+
   if (kind === "memory_flush_started") {
     set(() => ({ memoryStatusMessage: "Saving memory…" }));
     return;
@@ -754,14 +772,17 @@ function handleXaiNotification(params: JsonValue, set: Setter) {
   if (kind === "memory_flush_completed") {
     const result = typeof update.result === "string" ? update.result : undefined;
     set(() => ({ memoryStatusMessage: result ? `Memory saved: ${result.slice(0, 80)}` : "Memory saved" }));
+    promoteToEpisodic("grok flush");
     return;
   }
   if (kind === "memory_dream_completed") {
     set(() => ({ memoryStatusMessage: "Memory consolidated" }));
+    promoteToEpisodic("grok dream");
     return;
   }
   if (kind === "memory_session_saved") {
     set(() => ({ memoryStatusMessage: "Session memory saved" }));
+    promoteToEpisodic("grok session save");
     return;
   }
 

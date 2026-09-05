@@ -292,6 +292,57 @@ export async function deleteAnvilEntry(path: string, cwd?: string): Promise<void
   await invoke("delete_anvil_entry", { path, cwd });
 }
 
+// ─────────────────────── Operator memory: project state card ───────────────────────
+// See docs/OPERATOR_MEMORY.md. `.anvil/memory/STATE.md`, the `## Aktueller
+// Zustand` pattern brought natively into Anvil — Focus / Last decided /
+// Open-Blockers, plus a last-commit line computed live from git (never
+// stored). Project-scoped only, no global equivalent.
+
+export interface StateCard {
+  focus: string;
+  lastDecided: string;
+  openBlockers: string;
+  updatedAtMs: number;
+  lastCommit?: string;
+}
+
+export async function readStateCard(cwd: string): Promise<StateCard> {
+  return invoke("read_state_card", { cwd });
+}
+
+export async function writeStateCard(cwd: string, focus: string, lastDecided: string, openBlockers: string): Promise<void> {
+  await invoke("write_state_card", { cwd, focus, lastDecided, openBlockers });
+}
+
+function episodicSlug(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `episodic-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+/// Promotes an already-graded piece of text (grok's own `/flush`/`/dream`
+/// output, or the reply to an explicit "summarize this session" turn) into a
+/// durable, typed, bridged episodic entry. Deliberately reuses
+/// `writeAnvilEntry` unmodified — `type` was never restricted on the Rust
+/// side, only the manual-entry form's picker limits it to the original 6.
+/// This is the *only* way an "episodic" entry gets created — never exposed
+/// as a manual form option, see docs/OPERATOR_MEMORY.md diamond 2/3 for why
+/// (single writer, always something already graded, never a live mid-turn
+/// save-trivia tool).
+export async function captureEpisodic(
+  scope: MemoryEntryScope,
+  trigger: string,
+  summary: string,
+  cwd?: string
+): Promise<void> {
+  const text = summary.trim();
+  if (!text) return;
+  const firstLine = text.split("\n").find((l) => l.trim().length > 0)?.trim() ?? text.slice(0, 140);
+  const name = `Episodic — ${new Date().toLocaleString()} (${trigger})`;
+  const description = `${trigger} · ${firstLine.slice(0, 120)}`;
+  await writeAnvilEntry(scope, "episodic", episodicSlug(), name, description, text, undefined, cwd);
+}
+
 // ───────────────────────── Voice mode ─────────────────────────
 
 export interface VoiceEvent {

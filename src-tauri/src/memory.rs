@@ -431,15 +431,175 @@ fn regenerate_index(base_dir: &Path) -> Result<(), String> {
     fs::write(base_dir.join("MEMORY.md"), out).map_err(|e| e.to_string())
 }
 
+// ───────────────────────── operator memory: project state card ─────────────────────────
+//
+// The `## Aktueller Zustand` pattern (Focus / Last decided / Open-Blockers,
+// auto last-commit) Neo already uses by hand in CLAUDE.md files — brought
+// natively into Anvil instead of inventing a competing format. See
+// docs/OPERATOR_MEMORY.md, diamond 4. One card per project workspace, no
+// global equivalent (project state is inherently per-workspace).
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct StateCard {
+    focus: String,
+    last_decided: String,
+    open_blockers: String,
+    updated_at_ms: i64,
+    /// Never stored in STATE.md — always computed live from `git log` at
+    /// read time, same spirit as a git-hook-updated field but without
+    /// installing an actual hook from a GUI app.
+    last_commit: Option<String>,
+}
+
+impl StateCard {
+    fn has_content(&self) -> bool {
+        !self.focus.is_empty() || !self.last_decided.is_empty() || !self.open_blockers.is_empty()
+    }
+}
+
+fn state_card_path(cwd: &Path) -> PathBuf {
+    anvil_project_dir(cwd).join("STATE.md")
+}
+
+fn last_commit_summary(cwd: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["log", "-1", "--format=%h %s (%cr)"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+/// Three fixed `## `-headed sections, freeform prose body each — deliberately
+/// not the same frontmatter parser as typed entries (this is a single
+/// singular card, not a collection with a slug/description/status shape).
+fn parse_state_card(content: &str) -> StateCard {
+    let mut sections: [String; 3] = [String::new(), String::new(), String::new()];
+    let mut current: Option<usize> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(header) = trimmed.strip_prefix("## ") {
+            let key = header.trim().to_lowercase();
+            current = if key.starts_with("focus") {
+                Some(0)
+            } else if key.starts_with("last decided") {
+                Some(1)
+            } else if key.starts_with("open") || key.starts_with("blocker") {
+                Some(2)
+            } else {
+                None
+            };
+            continue;
+        }
+        if trimmed.starts_with('#') || trimmed.starts_with("<!--") {
+            continue;
+        }
+        if let Some(idx) = current {
+            if !sections[idx].is_empty() {
+                sections[idx].push('\n');
+            }
+            sections[idx].push_str(line);
+        }
+    }
+    StateCard {
+        focus: sections[0].trim().to_string(),
+        last_decided: sections[1].trim().to_string(),
+        open_blockers: sections[2].trim().to_string(),
+        updated_at_ms: 0,
+        last_commit: None,
+    }
+}
+
+fn render_state_card_file(focus: &str, last_decided: &str, open_blockers: &str) -> String {
+    let blank = |s: &str| if s.trim().is_empty() { "—" } else { s.trim() };
+    format!(
+        "<!-- Generated/edited via Grok Desktop's Memory panel. \"Last commit\" isn't stored here — it's computed live from git each time this is read. -->\n\
+         # Current State\n\n\
+         ## Focus\n{}\n\n\
+         ## Last decided\n{}\n\n\
+         ## Open / Blockers\n{}\n",
+        blank(focus),
+        blank(last_decided),
+        blank(open_blockers),
+    )
+}
+
+fn load_state_card(cwd: &Path) -> StateCard {
+    let path = state_card_path(cwd);
+    let mut card = fs::read_to_string(&path)
+        .ok()
+        .map(|s| parse_state_card(&s))
+        .unwrap_or_default();
+    card.updated_at_ms = file_modified_ms(&path);
+    card.last_commit = last_commit_summary(cwd);
+    card
+}
+
+#[tauri::command]
+pub fn read_state_card(cwd: String) -> Result<StateCard, String> {
+    Ok(load_state_card(Path::new(&cwd)))
+}
+
+#[tauri::command]
+pub fn write_state_card(
+    cwd: String,
+    focus: String,
+    last_decided: String,
+    open_blockers: String,
+    state: tauri::State<'_, GrokState>,
+) -> Result<(), String> {
+    let cwd_path = Path::new(&cwd);
+    let path = state_card_path(cwd_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, render_state_card_file(&focus, &last_decided, &open_blockers)).map_err(|e| e.to_string())?;
+
+    if state.memory_active {
+        regenerate_bridge_project(cwd_path, &anvil_project_dir(cwd_path))?;
+    }
+    Ok(())
+}
+
 // ───────────────────────── grok-native bridge ─────────────────────────
 
 const BRIDGE_BEGIN: &str = "<!-- anvil:memory:begin — generated by Grok Desktop, do not edit directly, edit via the Memory panel -->";
 const BRIDGE_END: &str = "<!-- anvil:memory:end -->";
 
-fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
+fn render_state_card_bridge_section(card: &StateCard) -> String {
+    if !card.has_content() && card.last_commit.is_none() {
+        return String::new();
+    }
     let mut out = String::new();
-    out.push_str(BRIDGE_BEGIN);
-    out.push('\n');
+    out.push_str("## Current State\n");
+    if !card.focus.is_empty() {
+        out.push_str(&format!("- **Focus**: {}\n", card.focus.replace('\n', " ")));
+    }
+    if !card.last_decided.is_empty() {
+        out.push_str(&format!("- **Last decided**: {}\n", card.last_decided.replace('\n', " ")));
+    }
+    if !card.open_blockers.is_empty() {
+        out.push_str(&format!("- **Open/Blockers**: {}\n", card.open_blockers.replace('\n', " ")));
+    }
+    if let Some(commit) = &card.last_commit {
+        out.push_str(&format!("- **Last commit**: {commit}\n"));
+    }
+    out
+}
+
+fn render_entries_bridge_section(entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
     let mut current_type = String::new();
     for e in entries {
         if e.r#type != current_type {
@@ -448,6 +608,28 @@ fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
         }
         out.push_str(&format!("- **{}**: {}\n", e.name, e.description));
     }
+    out
+}
+
+fn render_bridge_block(entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
+    out.push_str(BRIDGE_BEGIN);
+    out.push('\n');
+    out.push_str(&render_entries_bridge_section(entries));
+    out.push_str(BRIDGE_END);
+    out.push('\n');
+    out
+}
+
+/// Project scope's bridge additionally leads with the state card (diamond 4:
+/// it's the first thing grok should read, not one entry among many) — global
+/// scope has no state card at all, so it keeps using `render_bridge_block`.
+fn render_project_bridge_block(card: &StateCard, entries: &[MemoryEntryMeta]) -> String {
+    let mut out = String::new();
+    out.push_str(BRIDGE_BEGIN);
+    out.push('\n');
+    out.push_str(&render_state_card_bridge_section(card));
+    out.push_str(&render_entries_bridge_section(entries));
     out.push_str(BRIDGE_END);
     out.push('\n');
     out
@@ -481,7 +663,8 @@ fn upsert_bridge_block(grok_memory_file: &Path, block: &str) -> Result<(), Strin
 
 fn regenerate_bridge_project(cwd: &Path, project_base_dir: &Path) -> Result<(), String> {
     let entries = scan_scope(project_base_dir);
-    let block = render_bridge_block(&entries);
+    let card = load_state_card(cwd);
+    let block = render_project_bridge_block(&card, &entries);
     let target = grok_memory_workspace_file(cwd).ok_or("could not resolve home directory")?;
     upsert_bridge_block(&target, &block)
 }

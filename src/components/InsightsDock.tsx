@@ -116,7 +116,7 @@ export function InsightsDock({ sessionId }: { sessionId?: string }) {
       {dockTab === "activity" && <ActivityPanel sessionId={sessionId} />}
       {dockTab === "workflows" && <WorkflowPanel session={session} />}
       {dockTab === "assets" && <AssetsPanel cwd={session?.cwd} />}
-      {dockTab === "memory" && <MemoryPanel cwd={session?.cwd} />}
+      {dockTab === "memory" && <MemoryPanel cwd={session?.cwd} sessionId={sessionId} />}
     </motion.div>
   );
 }
