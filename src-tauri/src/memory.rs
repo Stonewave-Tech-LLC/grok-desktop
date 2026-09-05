@@ -522,7 +522,10 @@ fn parse_state_card(content: &str) -> StateCard {
 }
 
 fn render_state_card_file(focus: &str, last_decided: &str, open_blockers: &str) -> String {
-    let blank = |s: &str| if s.trim().is_empty() { "—" } else { s.trim() };
+    let blank = |s: &str| {
+        let t = s.trim();
+        if t.is_empty() { "—" } else { t }.to_string()
+    };
     format!(
         "<!-- Generated/edited via Grok Desktop's Memory panel. \"Last commit\" isn't stored here — it's computed live from git each time this is read. -->\n\
          # Current State\n\n\
