@@ -290,7 +290,12 @@ body {
   left: -10%;
   width: 60%;
   height: 60%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0) 70%);
+  /* Alpha bumped 0.1 -> 0.16 (slice 3b): blur(80px) spreads the same core
+     alpha over a much larger area, so the pre-blur value reads dimmer than
+     it used to (p5 profiling: mean 19.0 -> 16.9 over a drift cycle, barely
+     perceptible). Site tunes its orb alphas 3-4x higher than these for the
+     same reason — its values were chosen with blur already applied. */
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 70%);
   animation: gd-ambient-drift-1 34s var(--gd-ease) infinite alternate;
 }
 
@@ -299,7 +304,7 @@ body {
   right: -15%;
   width: 65%;
   height: 65%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0) 70%);
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 70%);
   animation: gd-ambient-drift-2 42s var(--gd-ease) infinite alternate;
 }
 
