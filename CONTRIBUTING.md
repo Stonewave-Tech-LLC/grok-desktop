@@ -41,12 +41,22 @@ in-app debug console.
 
 ## Pull requests
 
-- Keep PRs focused — one logical change per PR.
-- Match the existing code style (Rust: `cargo fmt`; TS: no enforced formatter yet,
-  match surrounding code).
-- Run `cargo check` (backend) and `npm run build` (frontend, includes a `tsc` typecheck)
-  before opening a PR.
-- Explain the *why* in the PR description, not just the *what*.
+`main` is protected: no direct pushes. Open a PR for every change (including agent-authored
+ones), keep it focused — one logical change per PR — and wait for CI to go green.
+
+CI jobs that must pass:
+
+- `rust` — `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`
+- `frontend` — `npm ci` + `npm run build` (includes `tsc`)
+
+Locally, before opening a PR:
+
+```bash
+cd src-tauri && cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --all-targets
+cd .. && npm run build
+```
+
+Match the existing code style. Explain the *why* in the PR description, not just the *what*.
 
 ## Code of conduct
 
